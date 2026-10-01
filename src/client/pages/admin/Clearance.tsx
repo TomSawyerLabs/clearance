@@ -3,6 +3,8 @@ import {
   Badge,
   Button,
   Checkbox,
+  Code,
+  FileButton,
   Group,
   NativeSelect,
   NumberInput,
@@ -15,9 +17,15 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { type Field, fieldsSchema } from "../../../shared/document.ts";
+import {
+  documentFingerprint,
+  fromMarkdownFile,
+  toFieldsFile,
+  toMarkdownFile,
+} from "../../../shared/documentFile.ts";
 import { api, type ClearanceDto, post, type VersionDto } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { DocumentView } from "../../components/DocumentView.tsx";
@@ -250,15 +258,67 @@ function Editor({
   const [supersedes, setSupersedes] = useState(true);
   const [view, setView] = useState("write");
   const action = useAction();
-  const unchanged =
-    current !== undefined &&
-    title === current.title &&
-    body === current.body &&
-    JSON.stringify(tidy(fields)) === JSON.stringify(current.fields);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+
+  // The same fingerprint the server will record on publishing, and the one
+  // `clearance hash` prints for the files, so a draft can be checked first.
+  useEffect(() => {
+    let live = true;
+    documentFingerprint({ title, body, fields: tidy(fields) }).then(
+      (value) => live && setFingerprint(value),
+      // Not fingerprintable yet, e.g. a question with no wording.
+      () => live && setFingerprint(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [title, body, fields]);
+  const unchanged = current !== undefined && fingerprint === current.bodyHash;
+
+  /** Takes the text from a `.md` file and the questions from a `.json` file. */
+  async function load(files: File[]) {
+    setLoadError(null);
+    try {
+      for (const file of files) {
+        const text = await file.text();
+        if (file.name.toLowerCase().endsWith(".json")) {
+          const parsed = fieldsSchema.safeParse(JSON.parse(text));
+          if (!parsed.success) {
+            const issue = parsed.error.issues[0];
+            throw new Error(
+              `${file.name}: ${issue?.path.join(".") ?? ""} ${issue?.message ?? "is not a list of questions"}`,
+            );
+          }
+          setFields(parsed.data);
+        } else {
+          const document = fromMarkdownFile(text);
+          if (document.title) setTitle(document.title);
+          setBody(document.body);
+        }
+      }
+    } catch (error) {
+      setLoadError((error as Error).message);
+    }
+  }
 
   return (
     <Stack>
       <Title order={3}>{current ? "Edit the text" : "Write the text"}</Title>
+      <Group>
+        <FileButton onChange={load} accept=".md,.markdown,.txt,.json" multiple>
+          {(props) => (
+            <Button {...props} variant="light" size="xs">
+              Load from files
+            </Button>
+          )}
+        </FileButton>
+        <Text size="sm" c="dimmed" style={{ flex: 1, minWidth: 220 }}>
+          A Markdown file whose first line is “# Title”, and optionally a JSON
+          file of questions. Choose both at once.
+        </Text>
+      </Group>
+      <Problem message={loadError} />
       <TextInput
         label="Title"
         description="Printed at the top of the signing page and the signed record."
@@ -345,7 +405,83 @@ function Editor({
           </Text>
         )}
       </Group>
+      {fingerprint && !unchanged && (
+        <Fingerprint label="Fingerprint of this draft" value={fingerprint} />
+      )}
     </Stack>
+  );
+}
+
+/** A document's SHA-256, shown whole: its job is to be compared. */
+function Fingerprint({ label, value }: { label: string; value: string }) {
+  return (
+    <Text size="xs" c="dimmed" style={{ wordBreak: "break-all" }}>
+      {label}: <Code>{value}</Code>
+    </Text>
+  );
+}
+
+function download(filename: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** A published version, with the files to keep in version control. */
+function PublishedVersion({
+  clearance,
+  version,
+}: {
+  clearance: ClearanceDto;
+  version: VersionDto;
+}) {
+  const format = useFormat();
+  const slug =
+    clearance.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "document";
+  return (
+    <Paper withBorder p="sm">
+      <Stack gap={6}>
+        <Text size="sm">
+          <strong>Version {version.version}</strong>, published{" "}
+          {format.dateTime(version.publishedAt)}
+          {version.version > 1 && !version.supersedes
+            ? " (a correction; earlier signatures stayed valid)"
+            : ""}
+        </Text>
+        <Fingerprint label="Fingerprint" value={version.bodyHash} />
+        <Group gap="xs">
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            onClick={() =>
+              download(
+                `${slug}.md`,
+                toMarkdownFile(version.title, version.body),
+              )
+            }
+          >
+            Download the text (.md)
+          </Button>
+          {version.fields.length > 0 && (
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              onClick={() =>
+                download(`${slug}.fields.json`, toFieldsFile(version.fields))
+              }
+            >
+              Download the questions (.json)
+            </Button>
+          )}
+        </Group>
+      </Stack>
+    </Paper>
   );
 }
 
@@ -487,14 +623,17 @@ export function ClearancePage() {
             {history.length > 0 && (
               <Stack gap="xs">
                 <Title order={4}>Published versions</Title>
+                <Text size="sm" c="dimmed">
+                  To check that files in version control are what was published,
+                  run <Code>clearance hash FILE.md FIELDS.json</Code> on them
+                  and compare the fingerprint.
+                </Text>
                 {history.map((version) => (
-                  <Text key={version.id} size="sm">
-                    Version {version.version}, published{" "}
-                    {format.dateTime(version.publishedAt)}
-                    {version.version > 1 && !version.supersedes
-                      ? " (a correction; earlier signatures stayed valid)"
-                      : ""}
-                  </Text>
+                  <PublishedVersion
+                    key={version.id}
+                    clearance={clearance}
+                    version={version}
+                  />
                 ))}
               </Stack>
             )}

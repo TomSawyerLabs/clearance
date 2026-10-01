@@ -1,12 +1,32 @@
-import { existsSync, unlinkSync } from "node:fs";
-import { createApi } from "../server/app.ts";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { createApi, type Snapshot } from "../server/app.ts";
 import { createCtx } from "../server/context.ts";
 import { migrateToLatest } from "../server/db/migrations.ts";
 import { DEFAULT_DATABASE_URL, openStore } from "../server/db/open.ts";
 import { addDays } from "../server/lib/util.ts";
 import { audit } from "../server/services/audit.ts";
+import {
+  backupFilename,
+  exportBackup,
+  isEmpty,
+  restoreBackup,
+} from "../server/services/backup.ts";
 import { createInvite } from "../server/services/invites.ts";
 import { getSettings, settingQueries } from "../server/services/settings.ts";
+import { fieldsSchema } from "../shared/document.ts";
+import {
+  documentFingerprint,
+  fromMarkdownFile,
+} from "../shared/documentFile.ts";
 import {
   DEFAULT_SETTINGS,
   type Settings,
@@ -20,6 +40,8 @@ import {
 //   DATABASE_URL  sqlite:<path> (default sqlite:./data/clearance.db) or postgres://...
 //   PORT, HOST    TCP listener (default 127.0.0.1:8080)
 //   SOCKET_PATH   listen on a unix socket instead, for a reverse proxy on the same host
+//   BACKUP_DIR    where automatic backups are written (default: a "backups"
+//                 directory beside the SQLite file, or ./data/backups)
 
 /** Looks up a static file by URL path, e.g. `/assets/app.js`. */
 export type AssetSource = (path: string) => Blob | null;
@@ -31,6 +53,11 @@ const USAGE = `Usage:
                                  clearance config set origin '"https://release.example.org"'
   clearance recovery-link [NAME] print a one-time link that gives an administrator
                                  (the first one, or the one named) a new passkey
+  clearance backup [FILE]        write a backup now (default: into the backup directory)
+  clearance restore FILE         load a backup into an empty installation
+  clearance hash FILE.md [FIELDS.json]
+                                 print the fingerprint a document would have if published,
+                                 to match files in version control against a published version
   clearance migrate              apply database migrations and exit
 `;
 
@@ -39,12 +66,34 @@ export async function main(
   argv: string[] = process.argv.slice(2),
 ) {
   const [command = "serve", ...rest] = argv;
-  if (!["serve", "config", "migrate", "recovery-link"].includes(command)) {
+  const commands = [
+    "serve",
+    "config",
+    "migrate",
+    "recovery-link",
+    "backup",
+    "restore",
+    "hash",
+  ];
+  if (!commands.includes(command)) {
     console.error(USAGE);
     process.exit(command === "help" || command === "--help" ? 0 : 2);
   }
 
-  const store = openStore(process.env.DATABASE_URL || DEFAULT_DATABASE_URL);
+  // Needs no database: it is run in a checkout of the documents, not on the server.
+  if (command === "hash") {
+    await hash(rest);
+    return;
+  }
+
+  const databaseUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
+  const backupDir = resolve(
+    process.env.BACKUP_DIR ||
+      (databaseUrl.startsWith("sqlite:") && databaseUrl !== "sqlite::memory:"
+        ? join(dirname(databaseUrl.slice("sqlite:".length)), "backups")
+        : "./data/backups"),
+  );
+  const store = openStore(databaseUrl);
   const applied = await migrateToLatest(store.db);
   if (applied.length) console.log(`Applied migrations: ${applied.join(", ")}`);
   const ctx = createCtx(store);
@@ -66,9 +115,40 @@ export async function main(
     return;
   }
 
+  if (command === "backup") {
+    const file = rest[0]
+      ? resolve(rest[0])
+      : join(backupDir, backupFilename(ctx.now()));
+    await writeBackup(ctx, file);
+    console.log(file);
+    await store.close();
+    return;
+  }
+
+  if (command === "restore") {
+    if (!rest[0] || !existsSync(rest[0])) {
+      console.error(USAGE);
+      process.exit(2);
+    }
+    try {
+      const counts = await restoreBackup(ctx, Bun.file(rest[0]).stream());
+      const { origin } = await getSettings(ctx);
+      console.log(`Restored: ${JSON.stringify(counts)}`);
+      console.log(
+        `This installation's address is ${origin}. Passkeys only work there.`,
+      );
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exitCode = 1;
+    }
+    await store.close();
+    return;
+  }
+
   const api = createApi({
     ctx,
     clientIp: (request) => server.requestIP(request)?.address ?? "",
+    snapshots: async () => listSnapshots(backupDir),
   });
 
   const fetch = async (request: Request): Promise<Response> => {
@@ -119,13 +199,84 @@ export async function main(
     `Clearance is listening on ${socketPath ?? server.url} (${store.engine})`,
   );
 
+  // Automatic backups. Checked often and cheaply, so that a change to the
+  // schedule in Settings takes effect without a restart.
+  const snapshot = async () => {
+    try {
+      const settings = await getSettings(ctx);
+      if (settings.backupEveryHours === 0 || (await isEmpty(ctx))) return;
+      const newest = listSnapshots(backupDir)[0];
+      const due =
+        !newest ||
+        Date.now() - new Date(newest.at).getTime() >=
+          settings.backupEveryHours * 3_600_000;
+      if (due)
+        await writeBackup(ctx, join(backupDir, backupFilename(ctx.now())));
+      for (const old of listSnapshots(backupDir).slice(settings.backupKeep)) {
+        unlinkSync(join(backupDir, old.name));
+      }
+    } catch (error) {
+      console.error("Automatic backup failed:", error);
+    }
+  };
+  void snapshot();
+  const timer = setInterval(snapshot, 5 * 60_000);
+
   const stop = async () => {
+    clearInterval(timer);
     await server.stop();
     await store.close();
     process.exit(0);
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+}
+
+const SNAPSHOT = /^clearance-\d{8}T\d{6}Z\.ndjson\.gz$/;
+
+/** The automatic backups on disk, newest first. Other files in the directory are left alone. */
+function listSnapshots(dir: string): Snapshot[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => SNAPSHOT.test(name))
+    .map((name) => {
+      const stat = statSync(join(dir, name));
+      return { name, bytes: stat.size, at: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => (a.name < b.name ? 1 : -1));
+}
+
+/** Written under a temporary name first, so a half-written file is never mistaken for a backup. */
+async function writeBackup(ctx: ReturnType<typeof createCtx>, file: string) {
+  mkdirSync(dirname(file), { recursive: true });
+  const partial = `${file}.partial`;
+  await Bun.write(partial, new Response(exportBackup(ctx)));
+  renameSync(partial, file);
+}
+
+async function hash(args: string[]) {
+  const [markdown, fieldsFile] = args;
+  if (!markdown || !existsSync(markdown)) {
+    console.error(USAGE);
+    process.exit(2);
+  }
+  const { title, body } = fromMarkdownFile(readFileSync(markdown, "utf8"));
+  if (!title) {
+    console.error(`${markdown} must start with a "# Title" line.`);
+    process.exit(2);
+  }
+  const fields = fieldsSchema.safeParse(
+    fieldsFile ? JSON.parse(readFileSync(fieldsFile, "utf8")) : [],
+  );
+  if (!fields.success) {
+    console.error(
+      fields.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n"),
+    );
+    process.exit(2);
+  }
+  console.log(await documentFingerprint({ title, body, fields: fields.data }));
 }
 
 /**

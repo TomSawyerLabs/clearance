@@ -60,19 +60,7 @@ export function randomToken(): string {
   return toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
-/**
- * JSON with object keys sorted at every level and no whitespace. A signed
- * record is hashed in this form, so the same record always hashes the same
- * regardless of how the object was built.
- */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
-}
+export { canonicalJson } from "../../shared/documentFile.ts";
 
 export function addDays(iso: string, days: number): string {
   return new Date(new Date(iso).getTime() + days * 86_400_000).toISOString();

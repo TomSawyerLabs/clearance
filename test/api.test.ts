@@ -8,6 +8,10 @@ import {
 } from "bun:test";
 import { fromBase64Url, sha256, toBase64Url } from "../src/server/lib/util.ts";
 import {
+  documentFingerprint,
+  fromMarkdownFile,
+} from "../src/shared/documentFile.ts";
+import {
   createHarness,
   ENGINES,
   type Harness,
@@ -574,6 +578,133 @@ for (const engine of ENGINES) {
           })
         ).status,
       ).toBe(409);
+    });
+
+    test("a published document's fingerprint can be reproduced from its files", async () => {
+      const clearance = await admin.ok("POST", "/clearances", { name: "R" });
+      // As the files would be on Windows: CRLF line endings, a trailing newline.
+      const published = await admin.ok(
+        "POST",
+        `/clearances/${clearance.id}/versions`,
+        {
+          title: " Shop release ",
+          body: "# Risks\r\n\r\nSharp **tools**.\r\n",
+          fields: DOCUMENT.fields,
+        },
+      );
+      expect(published.body).toBe("# Risks\n\nSharp **tools**.");
+      expect(published.title).toBe("Shop release");
+      const fromFile = fromMarkdownFile(
+        "# Shop release\n\n# Risks\n\nSharp **tools**.\n",
+      );
+      expect(fromFile).toEqual({
+        title: "Shop release",
+        body: "# Risks\n\nSharp **tools**.",
+      });
+      expect(published.bodyHash).toBe(
+        await documentFingerprint({
+          title: fromFile.title!,
+          body: fromFile.body,
+          fields: DOCUMENT.fields as never,
+        }),
+      );
+      // One changed word is a different document.
+      expect(published.bodyHash).not.toBe(
+        await documentFingerprint({
+          title: "Shop release",
+          body: "# Risks\n\nSharp **knives**.",
+          fields: DOCUMENT.fields as never,
+        }),
+      );
+    });
+
+    test("a backup restores a whole installation, passkeys and signed records included", async () => {
+      await admin.ok("PATCH", "/admin/settings", {
+        siteName: "Tom Sawyer Labs",
+      });
+      const group = await makeGroup();
+      const clearanceId = await makeClearance();
+      const member = await join(group.memberLink, { name: "Sam Student" });
+      const signed = await member.sign(clearanceId, member.userId!, ANSWERS);
+      expect(signed.body.granted).toBe(true);
+      const before = await member.get(
+        `/signatures/${signed.body.signatureId}/pdf`,
+      );
+      const pdfBefore = new Uint8Array(await before.response.arrayBuffer());
+
+      // Only an administrator can take one.
+      expect((await member.get("/admin/backup")).status).toBe(403);
+      const download = await admin.get("/admin/backup");
+      expect(download.response.headers.get("content-disposition")).toMatch(
+        /clearance-\d{8}T\d{6}Z\.ndjson\.gz/,
+      );
+      const file = new Uint8Array(await download.response.arrayBuffer());
+      expect([file[0], file[1]]).toEqual([0x1f, 0x8b]);
+
+      // A running installation cannot be overwritten.
+      expect((await admin.request("POST", "/setup/restore", file)).status).toBe(
+        403,
+      );
+
+      await h.close();
+      h = await createHarness(engine);
+      const visitor = h.client();
+      expect((await visitor.ok("GET", "/state")).setupNeeded).toBe(true);
+
+      // A file cut short is refused, and leaves nothing behind.
+      const cut = await visitor.request(
+        "POST",
+        "/setup/restore",
+        file.slice(0, file.length - 40),
+      );
+      expect(cut.status).toBe(400);
+      const junk = await visitor.request(
+        "POST",
+        "/setup/restore",
+        new TextEncoder().encode("hello\n"),
+      );
+      expect(junk.status).toBe(400);
+      expect((await visitor.ok("GET", "/state")).setupNeeded).toBe(true);
+
+      const restored = await visitor.request("POST", "/setup/restore", file);
+      expect(restored.status).toBe(200);
+      expect(restored.body.restored).toMatchObject({
+        users: 2,
+        signatures: 1,
+        grants: 1,
+      });
+      const state = await visitor.ok("GET", "/state");
+      expect(state).toMatchObject({
+        setupNeeded: false,
+        site: { name: "Tom Sawyer Labs" },
+      });
+      // Sign-ins are not part of a backup; passkeys are.
+      expect(state.me).toBeNull();
+
+      const sam = h.client();
+      sam.authenticator = member.authenticator;
+      expect((await sam.login()).body.userId).toBe(member.userId!);
+      expect(await statusOf(sam, member.userId!, clearanceId)).toMatchObject({
+        state: "active",
+      });
+      const after = await sam.get(`/signatures/${signed.body.signatureId}/pdf`);
+      expect(new Uint8Array(await after.response.arrayBuffer())).toEqual(
+        pdfBefore,
+      );
+
+      const ada = h.client();
+      ada.authenticator = admin.authenticator;
+      expect((await ada.login()).status).toBe(200);
+      const roster = await ada.ok("GET", `/groups/${group.id}`);
+      expect(roster.members.map((m: any) => m.name)).toEqual(["Sam Student"]);
+      // The link the mentor handed out still works after the move.
+      expect(
+        (await h.client().get(`/invites/${group.memberLink}`)).status,
+      ).toBe(200);
+      const audit = await ada.ok("GET", "/admin/audit");
+      expect(audit.map((entry: any) => entry.action)).toContain(
+        "backup.restore",
+      );
     });
   });
 }

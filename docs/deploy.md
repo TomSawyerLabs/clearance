@@ -47,8 +47,8 @@ To keep it running:
 - **Windows:** register `clearance.exe` as a service with a service wrapper such as WinSW or NSSM,
   with `DATABASE_URL` and `PORT` set in its environment.
 
-**Backup:** SQLite is in WAL mode, so do not copy the live file. Use
-`sqlite3 clearance.db ".backup backup.db"` or `VACUUM INTO`.
+Do not back up by copying the live database file: SQLite is in WAL mode and a copy can be
+inconsistent. Use Clearance's own backups, below.
 
 ## Bare metal with a managed database
 
@@ -66,6 +66,59 @@ file, delete its `postgres` service, and set `DATABASE_URL`.
 
 The container runs as uid 10001 and keeps its data in `/data`. If you bind-mount a host directory
 there, `chown 10001` it first.
+
+## Backups
+
+A backup is a single gzipped file containing everything: people, passkeys, groups, documents and
+every signed record with its PDF. It is the same format on every kind of installation, so a backup
+taken from SQLite restores onto Postgres or D1, and that is also how you move between them.
+Sign-ins are not included; people sign in again with the passkeys they already have.
+
+**Automatic backups** are written by the server (not on Workers) to a `backups` directory beside
+the SQLite file, or to `./data/backups` when the database is Postgres. Set `BACKUP_DIR` to put
+them elsewhere. By default one is written every 24 hours and 30 are kept; both are changed on the
+**Backups** page. In the container this is `/data/backups`, inside the data volume.
+
+These protect you from a damaged database, not from losing the machine. Copy the backups
+directory somewhere else with whatever you already use for that. The files are complete as soon as
+they appear (they are written under a `.partial` name first), so copying them at any time is safe.
+
+**On demand:**
+
+```sh
+clearance backup                 # into the backup directory; prints the path
+clearance backup /path/to/file   # or to a file you name
+```
+
+An administrator can also download one from the **Backups** page. That is the only way on Workers,
+alongside D1's own Time Travel.
+
+**Restoring** needs an empty installation, so that a restore can never overwrite live records:
+
+```sh
+clearance restore /path/to/clearance-20261001T120000Z.ndjson.gz
+```
+
+or choose "Restore from a backup file" on the setup page of a new installation. A backup taken by
+a newer version of Clearance is refused; update first. A file that is cut short or damaged is
+refused and leaves the installation empty.
+
+The backup carries the site address it was taken from, and passkeys are bound to that hostname.
+Restore it behind the same hostname.
+
+## Documents as files
+
+A document's wording can be kept in version control and matched to what was published.
+
+- A document is a Markdown file whose first line is `# Title`, and optionally a JSON file of its
+  questions. In the editor, **Load from files** fills in both, and each published version can be
+  downloaded back as the same two files.
+- Every published version has a fingerprint: the SHA-256 of its title, text and questions. Line
+  endings and surrounding blank space do not affect it. The fingerprint is part of every record
+  signed against that version.
+- `clearance hash release.md release.fields.json` prints the fingerprint those files would have.
+  If it equals a published version's, the files are exactly what people signed. It needs no
+  database, so it can run in a checkout of the documents, or in that repository's CI.
 
 ## Behind a reverse proxy
 

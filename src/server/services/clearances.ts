@@ -19,7 +19,11 @@ import type {
   DocumentVersionsTable,
   UsersTable,
 } from "../db/schema.ts";
-import { newId, sha256Hex } from "../lib/util.ts";
+import {
+  documentFingerprint,
+  normalizeDocument,
+} from "../../shared/documentFile.ts";
+import { newId } from "../lib/util.ts";
 import { audit } from "./audit.ts";
 import { isMinor, requireOversight } from "./people.ts";
 
@@ -254,18 +258,18 @@ export async function publishVersion(
     .select((eb) => eb.fn.max("version").as("version"))
     .where("clearance_id", "=", clearanceId)
     .executeTakeFirst();
-  const fields = JSON.stringify(parsed.data.fields);
+  // Stored exactly as fingerprinted: normalised line endings, no stray keys.
+  const content = normalizeDocument(parsed.data);
   const row: DocumentVersionsTable = {
     id: newId(),
     clearance_id: clearanceId,
     version: Number(latest?.version ?? 0) + 1,
-    title: parsed.data.title,
-    body: parsed.data.body,
-    fields,
-    // The hash covers everything the signer is shown and asked.
-    body_hash: await sha256Hex(
-      `${parsed.data.title}\n${parsed.data.body}\n${fields}`,
-    ),
+    title: content.title,
+    body: content.body,
+    fields: JSON.stringify(content.fields),
+    // Covers everything the signer is shown and asked, and can be reproduced
+    // from the document's files with `clearance hash`.
+    body_hash: await documentFingerprint(content),
     supersedes: parsed.data.supersedes ? 1 : 0,
     published_at: ctx.now(),
     published_by: admin.id,

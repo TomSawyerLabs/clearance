@@ -73,7 +73,8 @@ export class TestClient {
   private cookie: string | null = null;
   userId: string | null = null;
 
-  readonly authenticator: VirtualAuthenticator;
+  /** Assignable, so a test can carry a person's passkeys over to another installation. */
+  authenticator: VirtualAuthenticator;
 
   constructor(
     private readonly send: (request: Request) => Response | Promise<Response>,
@@ -93,12 +94,20 @@ export class TestClient {
       "x-test-ip": this.ip,
     };
     if (this.cookie) headers.cookie = this.cookie;
-    if (body !== undefined) headers["content-type"] = "application/json";
+    // Bytes go as they are (a backup file); anything else is JSON.
+    const bytes = body instanceof Uint8Array;
+    if (body !== undefined && !bytes)
+      headers["content-type"] = "application/json";
     const response = await this.send(
       new Request(`${this.origin}/api${path}`, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body:
+          body === undefined
+            ? undefined
+            : bytes
+              ? (body as Uint8Array<ArrayBuffer>)
+              : JSON.stringify(body),
       }),
     );
     const setCookie = response.headers.get("set-cookie");

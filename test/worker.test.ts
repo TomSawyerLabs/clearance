@@ -8,18 +8,80 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TestClient } from "./helpers/harness.ts";
+import { createHarness, TestClient } from "./helpers/harness.ts";
 
 // Cloudflare Workers with D1, for real: this starts `wrangler dev`, which runs
 // the Worker entry point in workerd against a local D1, and drives it over
 // HTTP. It is what covers the D1 driver, the batch-based `atomic`, and the
-// code paths (PDF, WebAuthn) running outside Bun.
+// code paths (PDF, WebAuthn, gzip) running outside Bun.
 
-const PORT = 8797;
-const ORIGIN = `http://localhost:${PORT}`;
 const root = join(import.meta.dir, "..");
-const state = mkdtempSync(join(tmpdir(), "clearance-worker-"));
-let wrangler: Bun.Subprocess | undefined;
+
+interface Worker {
+  origin: string;
+  stop(): Promise<void>;
+}
+
+async function startWorker(port: number): Promise<Worker> {
+  const state = mkdtempSync(join(tmpdir(), "clearance-worker-"));
+  const origin = `http://localhost:${port}`;
+  const wrangler = Bun.spawn(
+    [
+      "bun",
+      "x",
+      "wrangler",
+      "dev",
+      "--port",
+      String(port),
+      // Each instance needs its own debugger port, or the second fails to start.
+      "--inspector-port",
+      String(port + 1000),
+      "--persist-to",
+      state,
+      "--log-level",
+      "warn",
+    ],
+    { cwd: root, stdio: ["ignore", "inherit", "inherit"] },
+  );
+
+  const stop = async () => {
+    // Wrangler runs workerd as a grandchild. On Windows, killing the parent
+    // alone leaves workerd holding the port, so take the whole tree down.
+    if (process.platform === "win32") {
+      await Bun.spawn(["taskkill", "/PID", String(wrangler.pid), "/T", "/F"], {
+        stdio: ["ignore", "ignore", "ignore"],
+      }).exited;
+    } else {
+      wrangler.kill();
+    }
+    await wrangler.exited;
+    // Windows releases the database files a moment after the process is gone.
+    // A leftover temp directory is not worth failing the run over.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        rmSync(state, { recursive: true, force: true });
+        break;
+      } catch {
+        await Bun.sleep(250);
+      }
+    }
+  };
+
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const ready = await fetch(`${origin}/api/state`).then(
+      (response) => response.ok,
+      () => false,
+    );
+    if (ready) return { origin, stop };
+    await Bun.sleep(500);
+  }
+  await stop();
+  throw new Error("wrangler dev did not start");
+}
+
+let worker: Worker;
+let second: Worker | undefined;
 
 beforeAll(async () => {
   // Wrangler refuses to start without the assets directory; the API does not need its contents.
@@ -31,59 +93,16 @@ beforeAll(async () => {
       "<!doctype html><title>Clearance</title>",
     );
   }
-  wrangler = Bun.spawn(
-    [
-      "bun",
-      "x",
-      "wrangler",
-      "dev",
-      "--port",
-      String(PORT),
-      "--persist-to",
-      state,
-      "--log-level",
-      "warn",
-    ],
-    { cwd: root, stdio: ["ignore", "inherit", "inherit"] },
-  );
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    const ready = await fetch(`${ORIGIN}/api/state`).then(
-      (response) => response.ok,
-      () => false,
-    );
-    if (ready) return;
-    await Bun.sleep(500);
-  }
-  throw new Error("wrangler dev did not start");
+  worker = await startWorker(8797);
 }, 150_000);
 
 afterAll(async () => {
-  if (wrangler) {
-    // Wrangler runs workerd as a grandchild. On Windows, killing the parent
-    // alone leaves workerd holding the port, so take the whole tree down.
-    if (process.platform === "win32") {
-      await Bun.spawn(["taskkill", "/PID", String(wrangler.pid), "/T", "/F"], {
-        stdio: ["ignore", "ignore", "ignore"],
-      }).exited;
-    } else {
-      wrangler.kill();
-    }
-    await wrangler.exited;
-  }
-  // Windows releases the database files a moment after the process is gone.
-  // A leftover temp directory is not worth failing the run over.
-  for (let attempt = 0; attempt < 20; attempt++) {
-    try {
-      rmSync(state, { recursive: true, force: true });
-      break;
-    } catch {
-      await Bun.sleep(250);
-    }
-  }
-}, 30_000);
+  await worker?.stop();
+  await second?.stop();
+}, 60_000);
 
-test("the Worker runs setup, groups, signing and PDF on D1", async () => {
+test("the Worker runs setup, groups, signing, PDF and backups on D1", async () => {
+  const ORIGIN = worker.origin;
   const client = () => new TestClient((request) => fetch(request), "", ORIGIN);
 
   const admin = client();
@@ -149,9 +168,8 @@ test("the Worker runs setup, groups, signing and PDF on D1", async () => {
 
   const pdf = await parent.get(`/signatures/${signed.body.signatureId}/pdf`);
   expect(pdf.response.headers.get("content-type")).toBe("application/pdf");
-  expect(
-    new TextDecoder().decode((await pdf.response.arrayBuffer()).slice(0, 5)),
-  ).toBe("%PDF-");
+  const pdfBytes = new Uint8Array(await pdf.response.arrayBuffer());
+  expect(new TextDecoder().decode(pdfBytes.slice(0, 5))).toBe("%PDF-");
 
   const roster = await admin.ok("GET", `/groups/${group.id}`);
   expect(roster.members).toHaveLength(1);
@@ -172,4 +190,61 @@ test("the Worker runs setup, groups, signing and PDF on D1", async () => {
   await parent.logout();
   expect((await parent.get("/family")).status).toBe(401);
   expect((await parent.login()).status).toBe(200);
-}, 120_000);
+
+  // There is no disk for automatic backups here, and the UI is told so.
+  expect(await admin.ok("GET", "/admin/backups")).toMatchObject({
+    automatic: false,
+    snapshots: [],
+  });
+
+  // --- Moving the installation: D1 → SQLite, and D1 → a second, empty D1 ------
+  const download = await admin.get("/admin/backup");
+  const backup = new Uint8Array(await download.response.arrayBuffer());
+  expect([backup[0], backup[1]]).toEqual([0x1f, 0x8b]);
+
+  /** After a restore, people sign in with the passkeys they already had. */
+  async function expectSameInstallation(make: () => TestClient) {
+    const pat = make();
+    pat.authenticator = parent.authenticator;
+    expect((await pat.login()).body.userId).toBe(parent.userId!);
+    const family = await pat.ok("GET", "/family");
+    expect(family.wards[0]).toMatchObject({ name: "Kit Kid" });
+    expect(family.wards[0].clearances[0]).toMatchObject({ state: "active" });
+    const copy = await pat.get(`/signatures/${signed.body.signatureId}/pdf`);
+    expect(new Uint8Array(await copy.response.arrayBuffer())).toEqual(pdfBytes);
+  }
+
+  const sqlite = await createHarness("sqlite");
+  try {
+    const viaSqlite = () =>
+      new TestClient((request) => sqlite.api.fetch(request), "", ORIGIN);
+    const restored = await viaSqlite().request(
+      "POST",
+      "/setup/restore",
+      backup,
+    );
+    expect(restored.status).toBe(200);
+    expect(restored.body.restored).toMatchObject({ users: 4, signatures: 1 });
+    await expectSameInstallation(viaSqlite);
+  } finally {
+    await sqlite.close();
+  }
+
+  second = await startWorker(8798);
+  // The backup says the site lives at the first Worker's address, and passkeys
+  // are bound to its hostname. Both are "localhost" here, so only the port in
+  // the URL differs; the browser-reported origin stays the original one.
+  const viaSecond = () =>
+    new TestClient(
+      (request) =>
+        fetch(
+          new Request(request.url.replace(ORIGIN, second!.origin), request),
+        ),
+      "",
+      ORIGIN,
+    );
+  const restored = await viaSecond().request("POST", "/setup/restore", backup);
+  expect(restored.status).toBe(200);
+  expect(restored.body).toMatchObject({ origin: ORIGIN });
+  await expectSameInstallation(viaSecond);
+}, 300_000);

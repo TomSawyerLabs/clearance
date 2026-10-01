@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router";
 import { AccountPage } from "./pages/Account.tsx";
 import { AuditPage } from "./pages/admin/Audit.tsx";
+import { BackupsPage } from "./pages/admin/Backups.tsx";
 import { ClearancePage } from "./pages/admin/Clearance.tsx";
 import { ClearancesPage } from "./pages/admin/Clearances.tsx";
 import { SettingsPage } from "./pages/admin/Settings.tsx";
@@ -42,6 +43,7 @@ function Shell({ children }: { children: ReactNode }) {
               { to: "/admin/clearances", label: "Documents" },
               { to: "/admin/users", label: "People" },
               { to: "/admin/settings", label: "Settings" },
+              { to: "/admin/backups", label: "Backups" },
               { to: "/admin/audit", label: "Audit log" },
             ]
           : []),
@@ -238,6 +240,14 @@ export function App() {
           element={
             <Private admin>
               <SettingsPage />
+            </Private>
+          }
+        />
+        <Route
+          path="/admin/backups"
+          element={
+            <Private admin>
+              <BackupsPage />
             </Private>
           }
         />

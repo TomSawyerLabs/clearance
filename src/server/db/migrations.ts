@@ -287,6 +287,14 @@ const migrations: Migration[] = [
 ];
 
 /** Applies whatever has not been applied yet and returns the names it applied. */
+/** The names of the migrations this database has had, oldest first. */
+export async function appliedMigrations(db: Kysely<any>): Promise<string[]> {
+  const done = await sql<{
+    name: string;
+  }>`select name from clearance_migrations order by name`.execute(db);
+  return done.rows.map((row) => row.name);
+}
+
 export async function migrateToLatest(db: Kysely<any>): Promise<string[]> {
   await db.schema
     .createTable("clearance_migrations")
@@ -295,10 +303,7 @@ export async function migrateToLatest(db: Kysely<any>): Promise<string[]> {
     .addColumn("applied_at", "text", (c) => c.notNull())
     .execute();
 
-  const done = await sql<{
-    name: string;
-  }>`select name from clearance_migrations`.execute(db);
-  const applied = new Set(done.rows.map((row) => row.name));
+  const applied = new Set(await appliedMigrations(db));
 
   const ran: string[] = [];
   for (const migration of migrations) {

@@ -30,6 +30,13 @@ export const settingsSchema = z.object({
     .nullable(),
   /** How long a sign-in lasts. */
   sessionDays: z.number().int().min(1).max(365),
+  /**
+   * Hours between automatic backups written to the server's disk; 0 turns
+   * them off. Ignored on Cloudflare Workers, which has no disk.
+   */
+  backupEveryHours: z.number().int().min(0).max(720),
+  /** How many automatic backups to keep before the oldest is deleted. */
+  backupKeep: z.number().int().min(1).max(365),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -42,6 +49,8 @@ export const DEFAULT_SETTINGS: Settings = {
   adultAge: 18,
   clientIpHeader: null,
   sessionDays: 30,
+  backupEveryHours: 24,
+  backupKeep: 30,
 };
 
 function isTimeZone(zone: string): boolean {

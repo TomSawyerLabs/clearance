@@ -25,6 +25,12 @@ export type Family = Result<typeof familyService.getFamily>;
 export type Person = Result<typeof adminService.getPerson>;
 export type AdminUser = Result<typeof adminService.listUsers>[number];
 export type AuditEntry = Result<typeof listAudit>[number];
+export interface BackupStatus {
+  automatic: boolean;
+  everyHours: number;
+  keep: number;
+  snapshots: { name: string; bytes: number; at: string }[];
+}
 export type Passkey = Result<typeof authService.listPasskeys>[number];
 export type SignedRecordView = Result<typeof signingService.getSignature>;
 export type {

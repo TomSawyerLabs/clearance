@@ -89,10 +89,28 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
 7. [x] Packaging: compiled binary, Dockerfile and compose files, Workers config.
 8. [x] README and `docs/deploy.md`.
 9. [x] Published to GitHub; CI green, including the first container image build.
-10. [ ] **Next:** certifications (mentor attestation, itself a passkey sign-off). Not started.
-11. [ ] Per-group requirements, a Unicode font for PDFs, email. Not started.
+10. [x] Backups: one portable file, automatic snapshots on the server, restore into an empty
+        installation (command line and setup page). Asked for by Cameron, 2026-10-01.
+11. [x] Documents as files: load from and download as `.md` + `.fields.json`, one fingerprint
+        shared by the server, the editor and `clearance hash`. Asked for by Cameron, 2026-10-01.
+12. [ ] **Next:** certifications (mentor attestation, itself a passkey sign-off). Not started.
+13. [ ] Per-group requirements, a Unicode font for PDFs, email. Not started.
 
 ## Findings / gotchas
+
+- **A backup is engine-neutral on purpose.** It is gzipped NDJSON, one row per line, not a copy of
+  SQLite's file. That is what lets a backup from one engine restore onto another, and it was
+  tested D1 to SQLite and D1 to D1. Sessions and pending passkey challenges are left out.
+- **A restore cannot be one transaction** (D1 has none that long), so a failed restore wipes what
+  it loaded and leaves the installation empty. It only runs on an empty installation.
+- **D1 allows 100 bound parameters per statement**, so restore inserts one row per statement, 25
+  statements per batch.
+- **The document fingerprint ignores line endings.** Windows checkouts are CRLF; the published
+  text is stored with LF and trimmed, and the fingerprint is taken over canonical JSON of title,
+  text and questions. Changing this rule changes every fingerprint; do not.
+- **Two `wrangler dev` instances need different `--inspector-port`s**, or the second fails.
+- **Shell here-documents mangle backslashes in generated TypeScript.** Several patch scripts
+  written that way lost `\n`, `\d` and `\\`. Edit source files directly instead.
 
 - **In the browser test, wait for a page's heading before filling a field.** `getByLabel("Name")`
   matched "Site name" on the page being navigated away from, on a slower machine. Required fields
@@ -137,9 +155,8 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
 1. Is Postgres enough for "managed database", or is MySQL needed too?
 2. Should a document be requirable per group, not only "everyone in any group"?
 3. PDFs print non-Latin names as "?". Embed a Unicode font (larger PDFs, and a font to ship)?
-4. Should Clearance be able to take a document from a file or a git repository, and export its
-   published versions, so that wording can be authored and reviewed in git? Today publishing is
-   by pasting into the editor.
+4. Automatic backups stay on the same machine as the database. Should Clearance also push them
+   somewhere (S3-compatible storage, for example), or is copying the directory left to the host?
 
 ## Things not to do
 
@@ -164,6 +181,10 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
       published image and checks that it serves. It took three runs: the browser test typed into the
       page it was leaving (fixed by waiting for each page's heading), and the image tag needed the
       organization name in lowercase.
+- [x] 2026-10-01: Backups and documents-as-files built. `bun run test` 29 passing, including a
+      backup restored within each engine, from D1 to SQLite and from D1 to a second D1, and the
+      command-line `backup`, `restore` and `hash`. The browser test loads a document from files,
+      downloads it back, and restores a backup on a second server's setup page.
 - [ ] Not verified: macOS executables, a real Postgres server (only PGlite), a deployed Worker on
       real D1, real phones and passkey managers.
 - [ ] Certifications.

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 
 /** Gives a page a software passkey authenticator that approves every prompt. */
@@ -90,7 +91,69 @@ test("an admin sets up a release and a parent signs it for their child", async (
     .click();
   await expect(admin.getByText("sharp tools")).toBeVisible();
   await admin.getByRole("button", { name: "Publish version 1" }).click();
-  await expect(admin.getByText("Version 1, published")).toBeVisible();
+  await expect(
+    admin.getByText("published", { exact: false }).first(),
+  ).toBeVisible();
+  await expect(
+    admin.getByRole("heading", { name: "Edit the text" }),
+  ).toBeVisible();
+
+  // --- The same document kept as files: loaded, published, downloaded --------
+  const markdown =
+    "# Shop release\r\n\r\n## Risks\r\n\r\nThe shop has **hot irons**.\r\n";
+  const questions = [
+    {
+      key: "contact",
+      label: "Emergency contact name and phone",
+      type: "text",
+      required: true,
+    },
+  ];
+  await admin.locator('input[type="file"]').setInputFiles([
+    {
+      name: "release.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from(markdown),
+    },
+    {
+      name: "release.fields.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(questions)),
+    },
+  ]);
+  await expect(admin.getByLabel("Document text")).toHaveValue(
+    "## Risks\n\nThe shop has **hot irons**.",
+  );
+  await expect(admin.getByLabel(/^Title/)).toHaveValue("Shop release");
+  const draft = await admin
+    .getByText("Fingerprint of this draft")
+    .locator("code")
+    .innerText();
+  expect(draft).toMatch(/^[0-9a-f]{64}$/);
+  await admin.getByRole("button", { name: "Publish version 2" }).click();
+  const second = admin
+    .locator("div")
+    .filter({ hasText: /^Version 2, published/ })
+    .first();
+  await expect(second).toBeVisible();
+  // What was published has the fingerprint the draft showed.
+  await expect(admin.getByText(draft)).toBeVisible();
+  const [file] = await Promise.all([
+    admin.waitForEvent("download"),
+    admin
+      .getByRole("button", { name: "Download the text (.md)" })
+      .first()
+      .click(),
+  ]);
+  expect(file.suggestedFilename()).toBe("general-release.md");
+  const stream = await file.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  // The round trip gives back the file, with line endings normalised.
+  expect(Buffer.concat(chunks).toString()).toBe(
+    markdown.replaceAll("\r\n", "\n"),
+  );
+
   await admin.getByLabel("Required of everyone in a group").check();
   await admin.getByRole("button", { name: "Save rules" }).click();
 
@@ -158,6 +221,55 @@ test("an admin sets up a release and a parent signs it for their child", async (
   const row = admin.getByRole("row", { name: /Kit Kid/ });
   await expect(row.getByText("Current")).toBeVisible();
   await expect(row.getByText("Guardian: Pat Parent")).toBeVisible();
+
+  // --- Backups: downloaded here, restored into an empty second installation ---
+  await admin.getByRole("link", { name: "Backups" }).click();
+  await expect(admin.getByRole("heading", { name: "Backups" })).toBeVisible();
+  const backup = await admin.request.get("/api/admin/backup");
+  expect(backup.headers()["content-type"]).toBe("application/gzip");
+
+  const port = 8101;
+  const other = spawn(
+    process.env.E2E_COMMAND || "bun",
+    process.env.E2E_COMMAND ? [] : ["src/entry/bun.ts"],
+    {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        DATABASE_URL: "sqlite::memory:",
+      },
+      stdio: "ignore",
+    },
+  );
+  try {
+    const fresh = await (await browser.newContext()).newPage();
+    await expect(async () => {
+      await fresh.goto(`http://localhost:${port}/`);
+      await expect(
+        fresh.getByRole("heading", { name: "Set up this site" }),
+      ).toBeVisible();
+    }).toPass({ timeout: 20_000 });
+    await fresh.locator('input[type="file"]').setInputFiles({
+      name: "clearance-backup.ndjson.gz",
+      mimeType: "application/gzip",
+      buffer: await backup.body(),
+    });
+    // It is the same installation, but reached at a different address, and
+    // the page says so instead of leaving people with passkeys that fail.
+    await expect(
+      fresh.getByText("Restored, but this is a different address"),
+    ).toBeVisible();
+    const state = await (
+      await fresh.request.get(`http://localhost:${port}/api/state`)
+    ).json();
+    expect(state).toMatchObject({
+      setupNeeded: false,
+      site: { name: "Tom Sawyer Labs" },
+    });
+  } finally {
+    other.kill();
+  }
 
   // Signing out and back in works with the stored passkey.
   await parent.getByRole("link", { name: "Account" }).click();

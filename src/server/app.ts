@@ -1,15 +1,18 @@
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
+  badRequest,
   type Caller,
   type Ctx,
   forbidden,
   HttpError,
+  requireAdmin,
   requireUser,
 } from "./context.ts";
 import * as admin from "./services/admin.ts";
-import { listAudit } from "./services/audit.ts";
+import { audit, listAudit } from "./services/audit.ts";
 import * as auth from "./services/auth.ts";
+import * as backup from "./services/backup.ts";
 import * as clearances from "./services/clearances.ts";
 import * as family from "./services/family.ts";
 import * as groups from "./services/groups.ts";
@@ -24,6 +27,17 @@ export interface AppOptions {
    * `clientIpHeader` setting names a proxy header to trust instead.
    */
   clientIp(request: Request): string;
+  /**
+   * Lists the automatic backups this installation has written, newest first.
+   * Only an entry point with a disk supplies it.
+   */
+  snapshots?(): Promise<Snapshot[]>;
+}
+
+export interface Snapshot {
+  name: string;
+  bytes: number;
+  at: string;
 }
 
 type Env = { Variables: { caller: Caller } };
@@ -32,7 +46,7 @@ type Env = { Variables: { caller: Caller } };
  * The whole HTTP API as one `fetch` handler. It knows nothing about Bun or
  * Workers; each entry point supplies a database and serves the static files.
  */
-export function createApi({ ctx, clientIp }: AppOptions) {
+export function createApi({ ctx, clientIp, snapshots }: AppOptions) {
   const app = new Hono<Env>().basePath("/api");
 
   app.onError((error, c) => {
@@ -377,6 +391,56 @@ export function createApi({ ctx, clientIp }: AppOptions) {
   app.get("/admin/audit", async (c) =>
     c.json(await listAudit(ctx, c.get("caller"))),
   );
+
+  // --- Backups -----------------------------------------------------------------
+
+  app.get("/admin/backups", async (c) => {
+    requireAdmin(c.get("caller"));
+    const settings = await getSettings(ctx);
+    return c.json({
+      /** False on targets with no disk to keep snapshots on (Cloudflare Workers). */
+      automatic: Boolean(snapshots),
+      everyHours: settings.backupEveryHours,
+      keep: settings.backupKeep,
+      snapshots: snapshots ? await snapshots() : [],
+    });
+  });
+  app.get("/admin/backup", async (c) => {
+    const caller = c.get("caller");
+    requireAdmin(caller);
+    await audit(ctx, caller, "backup.download", "settings", "site").execute();
+    return new Response(backup.exportBackup(ctx), {
+      headers: {
+        "content-type": "application/gzip",
+        "content-disposition": `attachment; filename="${backup.backupFilename(ctx.now())}"`,
+        "cache-control": "private, no-store",
+      },
+    });
+  });
+  // Offered on the setup page: an empty installation can be started from a
+  // backup instead of from nothing. Open to whoever gets there first, exactly
+  // as creating the first administrator is.
+  app.post("/setup/restore", async (c) => {
+    if (!(await auth.isSetupNeeded(ctx))) {
+      throw forbidden("This site is already set up.");
+    }
+    const stream = c.req.raw.body;
+    if (!stream) throw badRequest("Send the backup file as the request body.");
+    const counts = await backup.restoreBackup(ctx, stream);
+    const caller = c.get("caller");
+    await audit(
+      ctx,
+      caller,
+      "backup.restore",
+      "settings",
+      "site",
+      counts,
+    ).execute();
+    return c.json({
+      restored: counts,
+      origin: (await getSettings(ctx)).origin,
+    });
+  });
 
   return app;
 }

@@ -23,7 +23,11 @@ not built. Read [What is not done](#what-is-not-done) before relying on it.
   child's. A parent can enrol a child and sign for them, or a student can sign up first and send a
   parent a link. When the child comes of age, the guardian's signature stops counting.
 - **Versioned documents.** Documents are written in Markdown with optional questions. Publishing a
-  change makes a new version; you choose whether everyone has to sign again.
+  change makes a new version; you choose whether everyone has to sign again. A document can be
+  loaded from and downloaded as files, and its fingerprint checked with `clearance hash`, so the
+  wording can live in version control.
+- **Backups that move between databases.** One file holds everything, is written automatically on
+  a schedule, and restores onto any supported database.
 - **One organization per installation.** The first person to register becomes the administrator.
   Every setting is changed in the web UI, not in configuration files.
 

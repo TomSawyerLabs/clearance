@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TestClient } from "./helpers/harness.ts";
@@ -19,8 +19,12 @@ const env = {
 let server: Bun.Subprocess | undefined;
 
 async function cli(...args: string[]) {
+  return cliWith(env, ...args);
+}
+
+async function cliWith(environment: typeof env, ...args: string[]) {
   const child = Bun.spawn(["bun", entry, ...args], {
-    env,
+    env: environment,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -32,7 +36,7 @@ async function cli(...args: string[]) {
   return { stdout, stderr, code };
 }
 
-beforeAll(async () => {
+async function startServer() {
   server = Bun.spawn(["bun", entry], {
     env,
     stdio: ["ignore", "ignore", "inherit"],
@@ -46,7 +50,9 @@ beforeAll(async () => {
     await Bun.sleep(100);
   }
   throw new Error("the server did not start");
-}, 30_000);
+}
+
+beforeAll(startServer, 30_000);
 
 afterAll(async () => {
   server?.kill();
@@ -92,3 +98,92 @@ test("an operator recovers a locked-out administrator and edits settings", async
   });
   expect((await admin.ok("GET", "/state")).site.name).toBe("Tom Sawyer Labs");
 }, 60_000);
+
+test("an operator backs up, restores elsewhere, and matches a document to its files", async () => {
+  const admin = new TestClient((request) => fetch(request), "", ORIGIN);
+  // The administrator from the previous test; their recovery passkey is not
+  // needed, a fresh link gives this client its own.
+  const token = (await cli("recovery-link")).stdout.match(/\/join\/(\S+)/)?.[1];
+  expect((await admin.register({ invite: token })).status).toBe(200);
+
+  // --- A document written as files, then published -------------------------
+  const markdown = join(dir, "release.md");
+  const fieldsFile = join(dir, "release.fields.json");
+  const fields = [
+    {
+      key: "contact",
+      label: "Emergency contact",
+      type: "text",
+      required: true,
+    },
+  ];
+  // CRLF, as a Windows checkout would have it.
+  writeFileSync(
+    markdown,
+    "# Shop release\r\n\r\nThe shop has **sharp tools**.\r\n",
+  );
+  writeFileSync(fieldsFile, JSON.stringify(fields, null, 2));
+  const hashed = await cli("hash", markdown, fieldsFile);
+  expect(hashed.code).toBe(0);
+  expect(hashed.stdout.trim()).toMatch(/^[0-9a-f]{64}$/);
+
+  const clearance = await admin.ok("POST", "/clearances", {
+    name: "General release",
+  });
+  const published = await admin.ok(
+    "POST",
+    `/clearances/${clearance.id}/versions`,
+    {
+      title: "Shop release",
+      body: "The shop has **sharp tools**.",
+      fields,
+    },
+  );
+  expect(published.bodyHash).toBe(hashed.stdout.trim());
+  // A file with no title line cannot be fingerprinted.
+  writeFileSync(join(dir, "untitled.md"), "Just text.\n");
+  expect((await cli("hash", join(dir, "untitled.md"))).code).toBe(2);
+
+  // --- A backup, restored into a second installation ------------------------
+  const file = join(dir, "moved.ndjson.gz");
+  const backup = await cli("backup", file);
+  expect(backup.code).toBe(0);
+  expect(backup.stdout.trim()).toBe(file);
+
+  const elsewhere = {
+    ...env,
+    DATABASE_URL: `sqlite:${join(dir, "elsewhere", "clearance.db")}`,
+  };
+  const restored = await cliWith(elsewhere, "restore", file);
+  expect(restored.code).toBe(0);
+  expect(restored.stdout).toContain('"document_versions":1');
+  expect(JSON.parse((await cliWith(elsewhere, "config")).stdout)).toMatchObject(
+    {
+      siteName: "Tom Sawyer Labs",
+      origin: ORIGIN,
+    },
+  );
+  // It only goes into an empty installation.
+  const again = await cliWith(elsewhere, "restore", file);
+  expect(again.code).toBe(1);
+  expect(again.stderr).toContain("empty installation");
+
+  // --- Automatic backups: one is written when the server starts with data ----
+  expect(await admin.ok("GET", "/admin/backups")).toMatchObject({
+    automatic: true,
+    everyHours: 24,
+    snapshots: [],
+  });
+  server?.kill();
+  await server?.exited;
+  await startServer();
+  let snapshots: { name: string; bytes: number }[] = [];
+  for (let attempt = 0; attempt < 50 && snapshots.length === 0; attempt++) {
+    await Bun.sleep(100);
+    snapshots = (await admin.ok("GET", "/admin/backups")).snapshots;
+  }
+  expect(snapshots).toHaveLength(1);
+  expect(snapshots[0]!.bytes).toBeGreaterThan(100);
+  // Beside the database, under its final name only.
+  expect(readdirSync(join(dir, "backups"))).toEqual([snapshots[0]!.name]);
+}, 90_000);
