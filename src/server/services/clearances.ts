@@ -383,34 +383,43 @@ export async function statusesFor(
   const now = ctx.now();
   const ids = users.map((user) => user.id);
 
-  const [clearances, versions, grants, signatures] = await Promise.all([
-    ctx.db
-      .selectFrom("clearances")
-      .selectAll()
-      .where("archived_at", "is", null)
-      .orderBy("name")
-      .execute(),
-    versionMeta(ctx),
-    ctx.db
-      .selectFrom("grants")
-      .selectAll()
-      .where("user_id", "in", ids)
-      .where("revoked_at", "is", null)
-      .orderBy("granted_at", "desc")
-      .execute(),
-    ctx.db
-      .selectFrom("signatures")
-      .select([
-        "id",
-        "subject_id",
-        "document_version_id",
-        "capacity",
-        "signed_at",
-      ])
-      .where("subject_id", "in", ids)
-      .orderBy("signed_at", "desc")
-      .execute(),
-  ]);
+  const [clearances, versions, grants, signatures, memberships] =
+    await Promise.all([
+      ctx.db
+        .selectFrom("clearances")
+        .selectAll()
+        .where("archived_at", "is", null)
+        .orderBy("name")
+        .execute(),
+      versionMeta(ctx),
+      ctx.db
+        .selectFrom("grants")
+        .selectAll()
+        .where("user_id", "in", ids)
+        .where("revoked_at", "is", null)
+        .orderBy("granted_at", "desc")
+        .execute(),
+      ctx.db
+        .selectFrom("signatures")
+        .select([
+          "id",
+          "subject_id",
+          "document_version_id",
+          "capacity",
+          "signed_at",
+        ])
+        .where("subject_id", "in", ids)
+        .orderBy("signed_at", "desc")
+        .execute(),
+      ctx.db
+        .selectFrom("group_members")
+        .select("user_id")
+        .where("user_id", "in", ids)
+        .execute(),
+    ]);
+  // "Required" is about participants. A parent who has an account only to
+  // sign for a child is in no group, and is not chased for a release.
+  const participants = new Set(memberships.map((row) => row.user_id));
 
   for (const user of users) {
     const statuses: ClearanceStatus[] = [];
@@ -474,7 +483,7 @@ export async function statusesFor(
       statuses.push({
         clearanceId: clearance.id,
         name: clearance.name,
-        required: clearance.required_for_all === 1,
+        required: clearance.required_for_all === 1 && participants.has(user.id),
         state: active
           ? "active"
           : signed.length

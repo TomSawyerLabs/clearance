@@ -4,8 +4,18 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "engines": {
-    "bun": ">=1.4.2"
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bunx --bun vite build",
+    "start": "bun src/entry/bun.ts",
+    "compile": "bun scripts/compile.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test/",
+    "test:e2e": "bun run build && playwright test",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "worker:dev": "bun run build && wrangler dev",
+    "worker:deploy": "bun run build && wrangler deploy"
   },
   "dependencies": {
     "@mantine/core": "^9.6.3",
@@ -41,5 +51,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
     "wrangler": "^4.146.0"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
   }
 }

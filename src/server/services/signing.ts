@@ -390,6 +390,8 @@ export async function getSignature(ctx: Ctx, caller: Caller, id: string) {
     }),
     signedAt: row.signed_at,
     ip: row.ip,
+    /** The questions as asked, so answers can be shown with their wording. */
+    fields: (await getVersion(ctx, row.document_version_id)).fields,
     /** Everything needed to check the signature without this application. */
     evidence: {
       canonicalRecord: row.record,

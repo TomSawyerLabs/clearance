@@ -35,13 +35,11 @@ export function settingQueries(
         updated_by: updatedBy,
       })
       .onConflict((oc) =>
-        oc
-          .column("key")
-          .doUpdateSet({
-            value: JSON.stringify(value),
-            updated_at: at,
-            updated_by: updatedBy,
-          }),
+        oc.column("key").doUpdateSet({
+          value: JSON.stringify(value),
+          updated_at: at,
+          updated_by: updatedBy,
+        }),
       ),
   );
 }
