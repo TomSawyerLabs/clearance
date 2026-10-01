@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+.wrangler/
+.dev.vars
+test-results/
+playwright-report/
+*.log
+src/entry/embedded-assets.generated.ts

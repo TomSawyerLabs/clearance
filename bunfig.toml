@@ -1,0 +1,4 @@
+[test]
+# Scenarios drive whole sign-up and signing flows, and the Postgres and D1
+# engines start a database per test.
+timeout = 60000
