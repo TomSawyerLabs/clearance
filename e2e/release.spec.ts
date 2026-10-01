@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 
 /** Gives a page a software passkey authenticator that approves every prompt. */
@@ -125,11 +126,20 @@ test("an admin sets up a release and a parent signs it for their child", async (
     "## Risks\n\nThe shop has **hot irons**.",
   );
   await expect(admin.getByLabel(/^Title/)).toHaveValue("Shop release");
-  const draft = await admin
-    .getByText("Fingerprint of this draft")
-    .locator("code")
-    .innerText();
-  expect(draft).toMatch(/^[0-9a-f]{64}$/);
+  // The fingerprint, worked out here by hand: SHA-256 of the canonical JSON
+  // (keys sorted, no spaces) of the title, the text with LF endings, and the
+  // questions. The page recomputes its own as each file is applied, so wait
+  // for it to arrive at this value instead of reading it once.
+  const draft = createHash("sha256")
+    .update(
+      `{"body":${JSON.stringify("## Risks\n\nThe shop has **hot irons**.")},` +
+        `"fields":[{"key":"contact","label":"Emergency contact name and phone","required":true,"type":"text"}],` +
+        `"title":"Shop release"}`,
+    )
+    .digest("hex");
+  await expect(
+    admin.getByText("Fingerprint of this draft").locator("code"),
+  ).toHaveText(draft);
   await admin.getByRole("button", { name: "Publish version 2" }).click();
   const second = admin
     .locator("div")
