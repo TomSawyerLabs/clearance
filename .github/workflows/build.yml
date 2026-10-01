@@ -10,6 +10,11 @@ on:
   push:
     branches:
       - master
+    # Notes and documentation do not change what ships.
+    paths-ignore:
+      - "plans/**"
+      - "docs/**"
+      - "**.md"
   workflow_dispatch:
 
 env:

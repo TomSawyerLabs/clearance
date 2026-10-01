@@ -88,13 +88,20 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
 6. [x] Web UI, with a browser test using a virtual passkey.
 7. [x] Packaging: compiled binary, Dockerfile and compose files, Workers config.
 8. [x] README and `docs/deploy.md`.
-9. [ ] **Current:** published to GitHub; get the first CI run green (it is the first time the
-       container image is built).
-10. [ ] Certifications (mentor attestation, itself a passkey sign-off). Not started.
+9. [x] Published to GitHub; CI green, including the first container image build.
+10. [ ] **Next:** certifications (mentor attestation, itself a passkey sign-off). Not started.
 11. [ ] Per-group requirements, a Unicode font for PDFs, email. Not started.
 
 ## Findings / gotchas
 
+- **In the browser test, wait for a page's heading before filling a field.** `getByLabel("Name")`
+  matched "Site name" on the page being navigated away from, on a slower machine. Required fields
+  also carry an asterisk in their accessible name, so match labels by prefix (`/^Name/`), not
+  exactly.
+- **GHCR image names must be lowercase**, and the organization is `TomSawyerLabs`. The workflow
+  lowercases `GITHUB_REPOSITORY`.
+- **The GHCR package is created private** even though the repo is public. A host that pulls
+  anonymously needs it switched to public in the package's settings.
 - **Kysely's Migrator does not work on D1.** Its SQLite introspector queries are refused:
   `D1_ERROR: not authorized: SQLITE_AUTH` at `SqliteIntrospector.getTables`. Replaced with a
   small runner in `src/server/db/migrations.ts` that never inspects the schema. Migrations must be
@@ -152,7 +159,11 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
       format clean; `bun run test` 24 passing (API scenarios on SQLite and Postgres, Worker on local
       D1, command line, PDF); `bun run test:e2e` passing, also against the compiled Windows
       executable. The Linux executable was run under WSL.
-- [ ] Not verified: the Docker image build (no Docker here), macOS executables, real Postgres
-      through anything but PGlite, a deployed Worker on real D1, real phones and passkey managers.
-- [ ] First CI run green on GitHub.
+- [x] 2026-10-01: Published. CI on Linux passes typecheck, the API tests (SQLite, Postgres through
+      PGlite, the Worker on local D1), the browser test, and builds the image, then starts the
+      published image and checks that it serves. It took three runs: the browser test typed into the
+      page it was leaving (fixed by waiting for each page's heading), and the image tag needed the
+      organization name in lowercase.
+- [ ] Not verified: macOS executables, a real Postgres server (only PGlite), a deployed Worker on
+      real D1, real phones and passkey managers.
 - [ ] Certifications.
