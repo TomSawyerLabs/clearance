@@ -64,6 +64,16 @@ test("an admin sets up a release and a parent signs it for their child", async (
     .getByLabel("Question or statement")
     .fill("Emergency contact name and phone");
   await admin.getByLabel("Must be answered").check();
+  // The same questions round-trip through the JSON form, with a key derived
+  // from the label.
+  await admin.getByRole("button", { name: "Paste questions as JSON" }).click();
+  await expect(admin.getByLabel("Questions as JSON")).toHaveValue(
+    /"key": "emergency_contact_name_and_phone"/,
+  );
+  await admin.getByRole("button", { name: "Use these questions" }).click();
+  await expect(admin.getByLabel("Question or statement")).toHaveValue(
+    "Emergency contact name and phone",
+  );
   await admin
     .getByRole("button", { name: "Preview" })
     .or(admin.getByText("Preview", { exact: true }))

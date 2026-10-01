@@ -17,7 +17,7 @@ import {
 } from "@mantine/core";
 import { useState } from "react";
 import { useParams } from "react-router";
-import type { Field } from "../../../shared/document.ts";
+import { type Field, fieldsSchema } from "../../../shared/document.ts";
 import { api, type ClearanceDto, post, type VersionDto } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { DocumentView } from "../../components/DocumentView.tsx";
@@ -52,6 +52,9 @@ function FieldsEditor({
   onChange(fields: Field[]): void;
 }) {
   const { state } = useSite();
+  const [pasting, setPasting] = useState(false);
+  const [json, setJson] = useState("");
+  const [jsonError, setJsonError] = useState<string | null>(null);
   const update = (index: number, patch: Partial<Field>) =>
     onChange(
       fields.map((field, i) => (i === index ? { ...field, ...patch } : field)),
@@ -150,7 +153,66 @@ function FieldsEditor({
         >
           Add a question
         </Button>
+        <Button
+          variant="subtle"
+          size="xs"
+          onClick={() => {
+            // Start from the questions as they stand now, keys filled in.
+            setJson(JSON.stringify(tidy(fields), null, 2));
+            setJsonError(null);
+            setPasting(!pasting);
+          }}
+        >
+          {pasting ? "Cancel pasting" : "Paste questions as JSON"}
+        </Button>
       </Group>
+      {pasting && (
+        <Stack gap="xs">
+          <Textarea
+            label="Questions as JSON"
+            description="Replaces the questions above. Useful for keeping a document's questions in a file beside its text."
+            value={json}
+            onChange={(event) => setJson(event.currentTarget.value)}
+            autosize
+            minRows={6}
+            maxRows={20}
+            error={jsonError}
+            styles={{
+              input: {
+                fontFamily: "var(--mantine-font-family-monospace)",
+                fontSize: 13,
+              },
+            }}
+          />
+          <Group>
+            <Button
+              size="xs"
+              onClick={() => {
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(json);
+                } catch {
+                  setJsonError("That is not valid JSON.");
+                  return;
+                }
+                const checked = fieldsSchema.safeParse(parsed);
+                if (!checked.success) {
+                  const issue = checked.error.issues[0];
+                  setJsonError(
+                    `${issue?.path.join(".") ?? ""}: ${issue?.message ?? "not valid"}`,
+                  );
+                  return;
+                }
+                onChange(checked.data);
+                setJsonError(null);
+                setPasting(false);
+              }}
+            >
+              Use these questions
+            </Button>
+          </Group>
+        </Stack>
+      )}
     </Stack>
   );
 }

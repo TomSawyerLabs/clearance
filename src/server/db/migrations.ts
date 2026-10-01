@@ -1,18 +1,27 @@
-import type { Kysely } from "kysely";
-import {
-  type Migration,
-  type MigrationProvider,
-  Migrator,
-} from "kysely/migration";
+import { type Kysely, sql } from "kysely";
 
 // Migrations live in code, not in files, because a Worker has no filesystem.
-// Never edit a migration that has shipped; add a new one.
+// This is a deliberately small runner instead of Kysely's Migrator: that one
+// inspects the schema with queries D1 refuses (SQLITE_AUTH).
+//
+// Rules for writing one:
+//   - Never edit a migration that has shipped; add a new one.
+//   - Make it safe to run twice (`ifNotExists`). Two server processes, or two
+//     Worker isolates, can start at the same moment and both try to apply it.
+//   - Only `text` and `integer` columns, so it means the same on every engine.
 
-const migrations: Record<string, Migration> = {
-  "0001_initial": {
-    async up(db: Kysely<unknown>) {
+interface Migration {
+  name: string;
+  up(db: Kysely<any>): Promise<void>;
+}
+
+const migrations: Migration[] = [
+  {
+    name: "0001_initial",
+    async up(db) {
       await db.schema
         .createTable("settings")
+        .ifNotExists()
         .addColumn("key", "text", (c) => c.primaryKey())
         .addColumn("value", "text", (c) => c.notNull())
         .addColumn("updated_at", "text", (c) => c.notNull())
@@ -21,6 +30,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("users")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("name", "text", (c) => c.notNull())
         .addColumn("birthdate", "text")
@@ -32,6 +42,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("credentials")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("user_id", "text", (c) =>
           c.notNull().references("users.id").onDelete("cascade"),
@@ -45,12 +56,14 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("credentials_user")
+        .ifNotExists()
         .on("credentials")
         .column("user_id")
         .execute();
 
       await db.schema
         .createTable("sessions")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("user_id", "text", (c) =>
           c.notNull().references("users.id").onDelete("cascade"),
@@ -62,6 +75,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("challenges")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("challenge", "text", (c) => c.notNull())
         .addColumn("kind", "text", (c) => c.notNull())
@@ -71,6 +85,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("groups")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("name", "text", (c) => c.notNull())
         .addColumn("code", "text")
@@ -80,6 +95,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("group_members")
+        .ifNotExists()
         .addColumn("group_id", "text", (c) =>
           c.notNull().references("groups.id").onDelete("cascade"),
         )
@@ -92,12 +108,14 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("group_members_user")
+        .ifNotExists()
         .on("group_members")
         .column("user_id")
         .execute();
 
       await db.schema
         .createTable("invites")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("token_hash", "text", (c) => c.notNull().unique())
         .addColumn("token", "text")
@@ -120,6 +138,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("guardianships")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("guardian_id", "text", (c) =>
           c.notNull().references("users.id").onDelete("cascade"),
@@ -134,12 +153,14 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("guardianships_ward")
+        .ifNotExists()
         .on("guardianships")
         .column("ward_id")
         .execute();
 
       await db.schema
         .createTable("clearances")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("name", "text", (c) => c.notNull())
         .addColumn("description", "text", (c) => c.notNull())
@@ -155,6 +176,7 @@ const migrations: Record<string, Migration> = {
 
       await db.schema
         .createTable("document_versions")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("clearance_id", "text", (c) =>
           c.notNull().references("clearances.id").onDelete("cascade"),
@@ -178,6 +200,7 @@ const migrations: Record<string, Migration> = {
       // under a record they signed.
       await db.schema
         .createTable("signatures")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("clearance_id", "text", (c) =>
           c.notNull().references("clearances.id"),
@@ -207,12 +230,14 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("signatures_subject")
+        .ifNotExists()
         .on("signatures")
         .columns(["subject_id", "clearance_id"])
         .execute();
 
       await db.schema
         .createTable("grants")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("clearance_id", "text", (c) =>
           c.notNull().references("clearances.id"),
@@ -234,12 +259,14 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("grants_user")
+        .ifNotExists()
         .on("grants")
         .columns(["user_id", "clearance_id"])
         .execute();
 
       await db.schema
         .createTable("audit_log")
+        .ifNotExists()
         .addColumn("id", "text", (c) => c.primaryKey())
         .addColumn("at", "text", (c) => c.notNull())
         .addColumn("actor_id", "text")
@@ -251,24 +278,38 @@ const migrations: Record<string, Migration> = {
         .execute();
       await db.schema
         .createIndex("audit_log_at")
+        .ifNotExists()
         .on("audit_log")
         .column("at")
         .execute();
     },
   },
-};
+];
 
-const provider: MigrationProvider = {
-  getMigrations: async () => migrations,
-};
-
+/** Applies whatever has not been applied yet and returns the names it applied. */
 export async function migrateToLatest(db: Kysely<any>): Promise<string[]> {
-  const { error, results } = await new Migrator({
-    db,
-    provider,
-  }).migrateToLatest();
-  if (error) throw error;
-  return (results ?? [])
-    .filter((r) => r.status === "Success")
-    .map((r) => r.migrationName);
+  await db.schema
+    .createTable("clearance_migrations")
+    .ifNotExists()
+    .addColumn("name", "text", (c) => c.primaryKey())
+    .addColumn("applied_at", "text", (c) => c.notNull())
+    .execute();
+
+  const done = await sql<{
+    name: string;
+  }>`select name from clearance_migrations`.execute(db);
+  const applied = new Set(done.rows.map((row) => row.name));
+
+  const ran: string[] = [];
+  for (const migration of migrations) {
+    if (applied.has(migration.name)) continue;
+    await migration.up(db);
+    await db
+      .insertInto("clearance_migrations")
+      .values({ name: migration.name, applied_at: new Date().toISOString() })
+      .onConflict((oc) => oc.column("name").doNothing())
+      .execute();
+    ran.push(migration.name);
+  }
+  return ran;
 }

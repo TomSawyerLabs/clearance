@@ -159,18 +159,38 @@ class Writer {
           color,
         });
       }
+      // Neighbouring words in the same font are drawn as one string, spaces
+      // included, so that text copied or searched in the PDF reads normally.
       let x = left;
+      let run: { text: string; font: PDFFont; x: number } | null = null;
+      const flush = () => {
+        if (run) {
+          this.page.drawText(run.text, {
+            x: run.x,
+            y: this.y,
+            size,
+            font: run.font,
+            color,
+          });
+        }
+        run = null;
+      };
       line.forEach((word, wordIndex) => {
-        if (wordIndex > 0 && word.spaced) x += space(word.font);
-        this.page.drawText(word.text, {
-          x,
-          y: this.y,
-          size,
-          font: word.font,
-          color,
-        });
-        x += word.width;
+        const gap = wordIndex > 0 && word.spaced;
+        if (run && run.font === word.font) {
+          run.text += (gap ? " " : "") + word.text;
+        } else {
+          flush();
+          // A space between two fonts is drawn with neither; it is just a gap.
+          run = {
+            text: word.text,
+            font: word.font,
+            x: gap ? x + space(word.font) : x,
+          };
+        }
+        x += (gap ? space(word.font) : 0) + word.width;
       });
+      flush();
     });
   }
 

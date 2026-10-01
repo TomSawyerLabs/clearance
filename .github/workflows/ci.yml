@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - master # master is checked by the image build
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Format
+        run: bun run fmt:check
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      # The API scenarios on SQLite and Postgres, and the Worker on local D1.
+      - name: Test
+        run: bun run test
+
+      - name: Install Chromium for the end-to-end test
+        run: bunx playwright install --with-deps chromium
+
+      - name: End-to-end test
+        run: bun run test:e2e
+
+      - name: The image builds
+        run: docker build .

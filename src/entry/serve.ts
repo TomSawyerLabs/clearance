@@ -3,6 +3,9 @@ import { createApi } from "../server/app.ts";
 import { createCtx } from "../server/context.ts";
 import { migrateToLatest } from "../server/db/migrations.ts";
 import { DEFAULT_DATABASE_URL, openStore } from "../server/db/open.ts";
+import { addDays } from "../server/lib/util.ts";
+import { audit } from "../server/services/audit.ts";
+import { createInvite } from "../server/services/invites.ts";
 import { getSettings, settingQueries } from "../server/services/settings.ts";
 import {
   DEFAULT_SETTINGS,
@@ -26,6 +29,8 @@ const USAGE = `Usage:
   clearance config               print the current settings
   clearance config set KEY JSON  change a setting without the web UI, e.g.
                                  clearance config set origin '"https://release.example.org"'
+  clearance recovery-link [NAME] print a one-time link that gives an administrator
+                                 (the first one, or the one named) a new passkey
   clearance migrate              apply database migrations and exit
 `;
 
@@ -34,7 +39,7 @@ export async function main(
   argv: string[] = process.argv.slice(2),
 ) {
   const [command = "serve", ...rest] = argv;
-  if (!["serve", "config", "migrate"].includes(command)) {
+  if (!["serve", "config", "migrate", "recovery-link"].includes(command)) {
     console.error(USAGE);
     process.exit(command === "help" || command === "--help" ? 0 : 2);
   }
@@ -45,6 +50,12 @@ export async function main(
   const ctx = createCtx(store);
 
   if (command === "migrate") {
+    await store.close();
+    return;
+  }
+
+  if (command === "recovery-link") {
+    await recoveryLink(ctx, rest.join(" ").trim());
     await store.close();
     return;
   }
@@ -115,6 +126,57 @@ export async function main(
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+}
+
+/**
+ * The way back in for an administrator who has lost every passkey. Whoever can
+ * run this already has the database, so it grants nothing they lack.
+ */
+async function recoveryLink(ctx: ReturnType<typeof createCtx>, name: string) {
+  let query = ctx.db
+    .selectFrom("users")
+    .selectAll()
+    .where("is_admin", "=", 1)
+    .where("disabled_at", "is", null)
+    .orderBy("created_at");
+  if (name) query = query.where("name", "=", name);
+  const admin = await query.executeTakeFirst();
+  if (!admin) {
+    console.error(
+      name
+        ? `No administrator is named "${name}".`
+        : "There is no administrator yet.",
+    );
+    process.exit(1);
+  }
+  const { origin } = await getSettings(ctx);
+  const { token, query: insert } = await createInvite(ctx, {
+    kind: "passkey",
+    createdBy: admin.id,
+    targetUserId: admin.id,
+    expiresAt: addDays(ctx.now(), 1),
+    maxUses: 1,
+  });
+  await ctx.store.atomic([
+    insert,
+    audit(
+      ctx,
+      {
+        user: null,
+        ip: "",
+        userAgent: "clearance recovery-link",
+        origin: null,
+      },
+      "invite.create",
+      "user",
+      admin.id,
+      { kind: "passkey", via: "command line" },
+    ),
+  ]);
+  console.log(`A new-passkey link for ${admin.name}. It works once and expires in a day:
+`);
+  console.log(`  ${origin ?? "https://YOUR-SITE"}/join/${token}
+`);
 }
 
 async function config(ctx: ReturnType<typeof createCtx>, args: string[]) {

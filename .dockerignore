@@ -1,0 +1,20 @@
+node_modules
+dist
+data
+.wrangler
+.dev.vars
+.git
+.gitignore
+*.log
+.vscode
+.idea
+plans
+docs
+*.md
+# tests never ship in the image
+test
+e2e
+playwright.config.ts
+test-results
+playwright-report
+*.generated.ts

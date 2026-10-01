@@ -56,7 +56,7 @@ async function openEngine(
   const store = await sharedPostgres();
   const tables = await sql<{ tablename: string }>`
     select tablename from pg_tables
-    where schemaname = ${"public"} and tablename not like ${"kysely_%"}
+    where schemaname = ${"public"} and tablename <> ${"clearance_migrations"}
   `.execute(store.db);
   const names = tables.rows.map((row) => `"${row.tablename}"`).join(", ");
   await sql.raw(`truncate table ${names} cascade`).execute(store.db);

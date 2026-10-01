@@ -6,4 +6,4 @@ data/
 test-results/
 playwright-report/
 *.log
-src/entry/embedded-assets.generated.ts
+*.generated.ts

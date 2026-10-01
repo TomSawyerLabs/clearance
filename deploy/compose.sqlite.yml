@@ -1,0 +1,17 @@
+# Clearance with its own embedded database, kept on a named volume.
+#
+#   docker compose -f deploy/compose.sqlite.yml up -d
+#
+# Put a reverse proxy with HTTPS in front of port 8080: passkeys only work on
+# HTTPS (or on http://localhost for trying it out).
+services:
+  clearance:
+    image: ghcr.io/cinderblock/clearance:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - clearance-data:/data
+
+volumes:
+  clearance-data:

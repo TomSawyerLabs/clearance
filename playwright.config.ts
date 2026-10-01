@@ -10,7 +10,8 @@ export default defineConfig({
   use: { baseURL: `http://localhost:${PORT}` },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: {
-    command: "bun src/entry/bun.ts",
+    // E2E_COMMAND points the same test at another build, e.g. the compiled executable.
+    command: process.env.E2E_COMMAND || "bun src/entry/bun.ts",
     url: `http://localhost:${PORT}/api/state`,
     env: {
       PORT: String(PORT),
