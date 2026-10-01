@@ -36,6 +36,7 @@ test("an admin sets up a release and a parent signs it for their child", async (
   ).toBeVisible();
 
   await admin.getByRole("link", { name: "Settings" }).click();
+  await expect(admin.getByRole("heading", { name: "Settings" })).toBeVisible();
   await admin.getByLabel("Site name").fill("Tom Sawyer Labs");
   await admin.getByLabel("Time zone").fill("America/Los_Angeles");
   await admin
@@ -48,12 +49,20 @@ test("an admin sets up a release and a parent signs it for their child", async (
   ).toBeVisible();
 
   // --- A document --------------------------------------------------------------
+  // Wait for each page by its heading before typing: a label like "Name"
+  // also matches "Site name" on the page being left.
   await admin.getByRole("link", { name: "Documents" }).click();
-  await admin.getByLabel("Name").fill("General release");
+  await expect(
+    admin.getByRole("heading", { name: "New document" }),
+  ).toBeVisible();
+  await admin.getByLabel(/^Name/).fill("General release");
   await admin
     .getByRole("button", { name: "Create, then write the text" })
     .click();
-  await admin.getByLabel("Title").fill("Shop release");
+  await expect(
+    admin.getByRole("heading", { name: "Write the text" }),
+  ).toBeVisible();
+  await admin.getByLabel(/^Title/).fill("Shop release");
   await admin
     .getByLabel("Document text")
     .fill(
@@ -87,7 +96,8 @@ test("an admin sets up a release and a parent signs it for their child", async (
 
   // --- A team and its link ---------------------------------------------------
   await admin.getByRole("link", { name: "Groups" }).click();
-  await admin.getByLabel("Name").fill("Robo Rafters");
+  await expect(admin.getByRole("heading", { name: "New group" })).toBeVisible();
+  await admin.getByLabel(/^Name/).fill("Robo Rafters");
   await admin.getByLabel("Number or code").fill("100");
   await admin.getByRole("button", { name: "Create group" }).click();
   await expect(
