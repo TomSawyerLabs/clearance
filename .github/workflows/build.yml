@@ -14,7 +14,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
 
 concurrency:
   group: build-${{ github.ref }}
@@ -49,6 +48,11 @@ jobs:
       - name: End-to-end test
         run: bun run test:e2e
 
+      # GHCR image paths must be lowercase; the org name is mixed-case.
+      - name: Resolve image name
+        id: img
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
@@ -66,8 +70,8 @@ jobs:
           push: true
           # A pinnable sha tag for reproducible deploys, plus a moving latest.
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
+            ${{ steps.img.outputs.name }}:${{ github.sha }}
+            ${{ steps.img.outputs.name }}:latest
           # A deployment can verify this label against the commit its pin
           # claims, so a mistyped digest can't quietly ship a different build.
           labels: |
@@ -83,7 +87,7 @@ jobs:
             echo
             echo '```json'
             echo '{'
-            echo '  "image": "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}",'
+            echo '  "image": "${{ steps.img.outputs.name }}",'
             echo '  "digest": "${{ steps.push.outputs.digest }}",'
             echo '  "source": {'
             echo '    "repo": "${{ github.repository }}",'
