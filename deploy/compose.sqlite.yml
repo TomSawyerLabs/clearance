@@ -6,7 +6,7 @@
 # HTTPS (or on http://localhost for trying it out).
 services:
   clearance:
-    image: ghcr.io/cinderblock/clearance:latest
+    image: ghcr.io/tomsawyerlabs/clearance:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

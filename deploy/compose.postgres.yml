@@ -6,7 +6,7 @@
 # at it. Put a reverse proxy with HTTPS in front of port 8080.
 services:
   clearance:
-    image: ghcr.io/cinderblock/clearance:latest
+    image: ghcr.io/tomsawyerlabs/clearance:latest
     restart: unless-stopped
     depends_on:
       postgres:
