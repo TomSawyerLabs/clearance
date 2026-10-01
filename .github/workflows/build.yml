@@ -80,6 +80,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The tests above run the source; this runs the thing that ships. It
+      # catches a binary that cannot start in the runtime image, and a data
+      # directory the unprivileged user cannot write.
+      - name: The published image starts and serves
+        run: |
+          docker run -d --name smoke -p 8080:8080 "${{ steps.img.outputs.name }}@${{ steps.push.outputs.digest }}"
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/state | grep -q '"setupNeeded":true'; then
+              curl -fsS -o /dev/null http://127.0.0.1:8080/
+              docker logs smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
       - name: Summarize how to deploy this build
         run: |
           {
