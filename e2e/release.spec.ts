@@ -234,7 +234,13 @@ test("an admin sets up a release and a parent signs it for their child", async (
 
   // --- Backups: downloaded here, restored into an empty second installation ---
   await admin.getByRole("link", { name: "Backups" }).click();
-  await expect(admin.getByRole("heading", { name: "Backups" })).toBeVisible();
+  await expect(
+    admin.getByRole("heading", { name: "Backups", exact: true }),
+  ).toBeVisible();
+  // Let the page finish loading, so that nothing below races its requests.
+  await expect(
+    admin.getByRole("heading", { name: "Automatic backups" }),
+  ).toBeVisible();
   const backup = await admin.request.get("/api/admin/backup");
   expect(backup.headers()["content-type"]).toBe("application/gzip");
 
