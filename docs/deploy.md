@@ -124,6 +124,39 @@ A document's wording can be kept in version control and matched to what was publ
   If it equals a published version's, the files are exactly what people signed. It needs no
   database, so it can run in a checkout of the documents, or in that repository's CI.
 
+## The configuration file
+
+How a site is set up can be kept in version control next to its documents.
+
+**Settings → Download configuration** gives `clearance.config.json`: the site's settings, each
+document's rules (required, validity, who signs for a minor, archived), and the list of groups
+with their codes. For each document it also records the version and fingerprint of the published
+text, so the file says which wording is live.
+
+It deliberately leaves out:
+
+- the site address and the proxy header, which belong to the deployment (environment variables);
+- the wording itself, which is the `.md` and `.fields.json` files;
+- everything about people: accounts, passkeys, who is in which group, invitation links, signed
+  records. That is what backups are for.
+
+**Apply a configuration file** shows what would change before anything is written, and applies
+only after you confirm. It creates and updates; it never deletes. A document or group that exists
+on the site and is not in the file is reported and left alone. It also never publishes text: if
+the published wording is not the version the file was written for, it says so, and you publish the
+matching files from the Documents page.
+
+From the command line:
+
+```sh
+clearance config export > clearance.config.json
+clearance config apply clearance.config.json --dry-run   # only show the changes
+clearance config apply clearance.config.json
+```
+
+A new installation can be brought to the same setup by applying the file and then publishing each
+document's files.
+
 ## Behind a reverse proxy
 
 Listen on loopback or on a unix socket and let the proxy handle TLS. With Caddy:

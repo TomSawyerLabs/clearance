@@ -641,6 +641,110 @@ for (const engine of ENGINES) {
       expect(record.record.capacity).toBe("self");
     });
 
+    test("a configuration file carries a site's setup to another installation", async () => {
+      await admin.ok("PATCH", "/admin/settings", {
+        siteName: "Tom Sawyer Labs",
+        minorsEnabled: true,
+      });
+      const group = await makeGroup("Robo Rafters", "100");
+      const clearanceId = await makeClearance({ validityDays: 365 });
+      await join(group.memberLink, { name: "Sam", adult: true });
+
+      const file = await admin.ok("GET", "/admin/config");
+      expect(file).toMatchObject({
+        clearanceConfig: 1,
+        settings: { siteName: "Tom Sawyer Labs", minorsEnabled: true },
+        documents: [
+          {
+            name: "General release",
+            requiredForAll: true,
+            validityDays: 365,
+            published: { version: 1 },
+          },
+        ],
+        groups: [{ name: "Robo Rafters", code: "100", archived: false }],
+      });
+      // Nothing about the deployment or about people is in it.
+      expect(file.settings).not.toHaveProperty("origin");
+      expect(JSON.stringify(file)).not.toContain("Sam");
+
+      // Against the site it came from, there is nothing to do.
+      expect(
+        (await admin.ok("POST", "/admin/config/plan", file)).changes,
+      ).toEqual([]);
+
+      // On a fresh installation the preview lists everything, and writes nothing.
+      await h.close();
+      h = await createHarness(engine);
+      const other = h.client();
+      await other.register({ name: "Ada" });
+      const plan = await other.ok("POST", "/admin/config/plan", file);
+      const kinds = plan.changes.map((change: any) => change.kind);
+      expect(kinds).toContain("setting");
+      expect(kinds).toContain("document.create");
+      expect(kinds).toContain("group.create");
+      expect(kinds).toContain("document.text");
+      expect(await other.ok("GET", "/groups")).toHaveLength(0);
+
+      await other.ok("POST", "/admin/config/apply", file);
+      expect((await other.ok("GET", "/state")).site).toMatchObject({
+        name: "Tom Sawyer Labs",
+        minorsEnabled: true,
+      });
+      expect(await other.ok("GET", "/groups")).toMatchObject([
+        { name: "Robo Rafters", code: "100" },
+      ]);
+      const created = (await other.ok("GET", "/clearances"))[0];
+      expect(created).toMatchObject({
+        name: "General release",
+        requiredForAll: true,
+        validityDays: 365,
+        current: null,
+      });
+
+      // Only the wording is left, and applying never publishes it.
+      const after = await other.ok("POST", "/admin/config/plan", file);
+      expect(after.changes).toEqual([
+        {
+          kind: "document.text",
+          name: "General release",
+          published: null,
+          expected: file.documents[0].published.fingerprint,
+        },
+      ]);
+      await other.ok("POST", `/clearances/${created.id}/versions`, DOCUMENT);
+      expect(
+        (await other.ok("POST", "/admin/config/plan", file)).changes,
+      ).toEqual([]);
+
+      // What the file does not mention is reported and left alone.
+      await other.ok("POST", "/groups", { name: "Extra Team" });
+      const extra = await other.ok("POST", "/admin/config/apply", file);
+      expect(extra.changes).toEqual([
+        { kind: "group.unlisted", name: "Extra Team" },
+      ]);
+      expect(await other.ok("GET", "/groups")).toHaveLength(2);
+
+      // A file that is not a configuration, and a person who is not an administrator.
+      expect(
+        (await other.post("/admin/config/plan", { settings: {} })).status,
+      ).toBe(400);
+      const member = h.client();
+      const link = await other.ok(
+        "POST",
+        `/groups/${(await other.ok("GET", "/groups"))[0].id}/invites`,
+        { kind: "group_member" },
+      );
+      await member.register({
+        invite: link.token,
+        name: "Mallory",
+        adult: true,
+      });
+      expect((await member.get("/admin/config")).status).toBe(403);
+      expect((await member.post("/admin/config/apply", file)).status).toBe(403);
+      void clearanceId;
+    });
+
     test("the site address belongs to the deployment, not to the administrator", async () => {
       // Recorded at setup when the deployment did not state it...
       const recorded = await admin.ok("GET", "/admin/settings");

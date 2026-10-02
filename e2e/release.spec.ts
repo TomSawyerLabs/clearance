@@ -68,6 +68,51 @@ test("an admin sets up a release and a parent signs it for their child", async (
     admin.getByRole("banner").getByText("Tom Sawyer Labs"),
   ).toBeVisible();
 
+  // --- The configuration file: downloaded, edited, previewed, applied --------
+  const [configDownload] = await Promise.all([
+    admin.waitForEvent("download"),
+    admin.getByRole("button", { name: "Download configuration" }).click(),
+  ]);
+  expect(configDownload.suggestedFilename()).toBe("clearance.config.json");
+  const configChunks: Buffer[] = [];
+  for await (const chunk of await configDownload.createReadStream()) {
+    configChunks.push(chunk as Buffer);
+  }
+  const siteConfig = JSON.parse(Buffer.concat(configChunks).toString());
+  expect(siteConfig.settings).toMatchObject({
+    siteName: "Tom Sawyer Labs",
+    minorsEnabled: true,
+  });
+  const configInput = admin.locator('input[type="file"]');
+  await configInput.setInputFiles({
+    name: "clearance.config.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(siteConfig)),
+  });
+  await expect(
+    admin.getByText("Nothing to change: this site already matches the file."),
+  ).toBeVisible();
+  await admin.getByRole("button", { name: "Close" }).click();
+  await configInput.setInputFiles({
+    name: "clearance.config.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({
+        ...siteConfig,
+        settings: { ...siteConfig.settings, sessionDays: 14 },
+        groups: [{ name: "Gear Heads", code: "200" }],
+      }),
+    ),
+  });
+  await expect(admin.getByText("New group “Gear Heads”")).toBeVisible();
+  await expect(admin.getByText("30 becomes 14")).toBeVisible();
+  await admin.getByRole("button", { name: "Apply 2 changes" }).click();
+  await expect(admin.getByText("Applied 2 changes.")).toBeVisible();
+  // The form above picks the applied value up.
+  await expect(
+    admin.getByLabel("Days before someone has to sign in again"),
+  ).toHaveValue("14");
+
   // --- A document --------------------------------------------------------------
   // Wait for each page by its heading before typing: a label like "Name"
   // also matches "Site name" on the page being left.

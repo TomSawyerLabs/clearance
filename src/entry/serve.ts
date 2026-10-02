@@ -20,6 +20,11 @@ import {
   isEmpty,
   restoreBackup,
 } from "../server/services/backup.ts";
+import {
+  applyConfigUnattended,
+  currentConfig,
+  previewConfig,
+} from "../server/services/config.ts";
 import { createInvite } from "../server/services/invites.ts";
 import { getSettings, settingQueries } from "../server/services/settings.ts";
 import { fieldsSchema } from "../shared/document.ts";
@@ -60,6 +65,8 @@ export type AssetSource = (path: string) => Blob | null;
 const USAGE = `Usage:
   clearance [serve]              run the server
   clearance config               print the current settings
+  clearance config export        print the configuration file: settings, document rules, groups
+  clearance config apply FILE    apply a configuration file (--dry-run to only show the changes)
   clearance config set KEY JSON  change a setting without the web UI, e.g.
                                  clearance config set siteName "Tom Sawyer Labs"
   clearance recovery-link [NAME] print a one-time link that gives an administrator
@@ -368,6 +375,28 @@ async function recoveryLink(ctx: ReturnType<typeof createCtx>, name: string) {
 async function config(ctx: ReturnType<typeof createCtx>, args: string[]) {
   if (args.length === 0) {
     console.log(JSON.stringify(await getSettings(ctx), null, 2));
+    return;
+  }
+  if (args[0] === "export") {
+    console.log(JSON.stringify(await currentConfig(ctx), null, 2));
+    return;
+  }
+  if (args[0] === "apply") {
+    const file = args.find((arg, index) => index > 0 && !arg.startsWith("--"));
+    if (!file || !existsSync(file)) {
+      console.error(USAGE);
+      process.exit(2);
+    }
+    try {
+      const wanted = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      const { changes } = args.includes("--dry-run")
+        ? { changes: await previewConfig(ctx, wanted) }
+        : await applyConfigUnattended(ctx, wanted);
+      console.log(JSON.stringify(changes, null, 2));
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(1);
+    }
     return;
   }
   const [verb, key, json] = args;

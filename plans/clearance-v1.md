@@ -103,6 +103,13 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
         installation (command line and setup page). Asked for by Cameron, 2026-10-01.
 11. [x] Documents as files: load from and download as `.md` + `.fields.json`, one fingerprint
         shared by the server, the editor and `clearance hash`. Asked for by Cameron, 2026-10-01.
+        11a. [x] Settings rework asked for by Cameron: minors are the opt-in with guardians on by default,
+        a time zone selector seeded from the first administrator's browser, and the proxy header and
+        site address moved to the environment (`CLIENT_IP_HEADER`, `PUBLIC_BASE_URL`).
+        11b. [x] Configuration file: settings, document rules and groups exported as one JSON file and
+        applied back with a preview (UI and `clearance config export` / `apply`). Cameron's idea: the
+        private documents repo also holds the configuration. The app does not touch git; a person
+        commits the downloaded file. Creates and updates only, never deletes, never publishes text.
 12. [ ] **Next:** certifications (mentor attestation, itself a passkey sign-off). Not started.
 13. [ ] Per-group requirements, a Unicode font for PDFs, email. Not started.
 
@@ -197,6 +204,8 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
       backup restored within each engine, from D1 to SQLite and from D1 to a second D1, and the
       command-line `backup`, `restore` and `hash`. The browser test loads a document from files,
       downloads it back, and restores a backup on a second server's setup page.
+- [x] 2026-10-01: Settings rework and the configuration file built. `bun run test` 37 passing;
+      the browser test downloads the configuration, previews an edited copy and applies it.
 - [ ] Not verified: macOS executables, a real Postgres server (only PGlite), a deployed Worker on
       real D1, real phones and passkey managers.
 - [ ] Certifications.

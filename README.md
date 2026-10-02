@@ -26,6 +26,8 @@ not built. Read [What is not done](#what-is-not-done) before relying on it.
   change makes a new version; you choose whether everyone has to sign again. A document can be
   loaded from and downloaded as files, and its fingerprint checked with `clearance hash`, so the
   wording can live in version control.
+- **Configuration as a file.** The settings, each document's rules and the list of groups download
+  as one JSON file to keep in version control, and apply back with a preview of what would change.
 - **Backups that move between databases.** One file holds everything, is written automatically on
   a schedule, and restores onto any supported database.
 - **One organization per installation.** The first person to register becomes the administrator.

@@ -12,6 +12,7 @@ import {
 import { useState } from "react";
 import { api, type Settings } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
+import { ConfigFile } from "./ConfigFile.tsx";
 import { useLoad, useSite } from "../../site.tsx";
 
 type AdminSettings = Settings & { originFromEnvironment: boolean };
@@ -156,13 +157,23 @@ function Form({ initial }: { initial: AdminSettings }) {
 }
 
 export function SettingsPage() {
+  const { refresh } = useSite();
   const settings = useLoad<AdminSettings>("/admin/settings");
   return (
     <Stack gap="lg">
       <Title order={2}>Settings</Title>
       <Loaded data={settings.data} error={settings.error}>
-        {(data) => <Form initial={data} />}
+        {(data) => (
+          // Remounted when the stored settings change underneath it, as they
+          // do when a configuration file is applied.
+          <Form key={JSON.stringify(data)} initial={data} />
+        )}
       </Loaded>
+      <ConfigFile
+        onApplied={async () => {
+          await Promise.all([settings.reload(), refresh()]);
+        }}
+      />
     </Stack>
   );
 }

@@ -14,6 +14,7 @@ import { audit, listAudit } from "./services/audit.ts";
 import * as auth from "./services/auth.ts";
 import * as backup from "./services/backup.ts";
 import * as clearances from "./services/clearances.ts";
+import * as config from "./services/config.ts";
 import * as family from "./services/family.ts";
 import * as groups from "./services/groups.ts";
 import { summarise } from "./services/people.ts";
@@ -408,6 +409,18 @@ export function createApi({
   );
   app.get("/admin/audit", async (c) =>
     c.json(await listAudit(ctx, c.get("caller"))),
+  );
+
+  // --- Configuration file ---------------------------------------------------------
+
+  app.get("/admin/config", async (c) =>
+    c.json(await config.exportConfig(ctx, c.get("caller"))),
+  );
+  app.post("/admin/config/plan", async (c) =>
+    c.json(await config.planConfig(ctx, c.get("caller"), await body(c))),
+  );
+  app.post("/admin/config/apply", async (c) =>
+    c.json(await config.applyConfig(ctx, c.get("caller"), await body(c))),
   );
 
   // --- Backups -----------------------------------------------------------------

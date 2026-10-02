@@ -96,6 +96,38 @@ test("an operator recovers a locked-out administrator and edits settings", async
   );
   expect((await cli("config", "set", "adultAge", "200")).code).toBe(2);
 
+  // The configuration file, from the command line: export, preview, apply.
+  const exported = JSON.parse((await cli("config", "export")).stdout);
+  expect(exported).toMatchObject({
+    clearanceConfig: 1,
+    settings: { siteName: "Tom Sawyer Labs" },
+    documents: [],
+    groups: [],
+  });
+  const configFile = join(dir, "clearance.config.json");
+  writeFileSync(
+    configFile,
+    JSON.stringify({
+      ...exported,
+      settings: { ...exported.settings, sessionDays: 14 },
+      groups: [{ name: "Robo Rafters", code: "100" }],
+    }),
+  );
+  const preview = await cli("config", "apply", configFile, "--dry-run");
+  expect(JSON.parse(preview.stdout)).toEqual([
+    { kind: "setting", key: "sessionDays", from: 30, to: 14 },
+    { kind: "group.create", name: "Robo Rafters" },
+  ]);
+  expect(JSON.parse((await cli("config")).stdout).sessionDays).toBe(30);
+  expect((await cli("config", "apply", configFile)).code).toBe(0);
+  expect(JSON.parse((await cli("config")).stdout).sessionDays).toBe(14);
+  expect(JSON.parse((await cli("config", "export")).stdout).groups).toEqual([
+    { name: "Robo Rafters", code: "100", archived: false },
+  ]);
+  expect((await admin.ok("GET", "/groups"))[0]).toMatchObject({
+    name: "Robo Rafters",
+  });
+
   // PUBLIC_BASE_URL has to be exactly an origin, and when given it is the
   // site's address whatever was recorded at setup.
   const sloppy = await cliWith(
