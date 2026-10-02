@@ -24,7 +24,10 @@ test("an admin sets up a release and a parent signs it for their child", async (
   browser,
 }) => {
   // --- The administrator sets the site up -----------------------------------
-  const admin = await withPasskeys(await browser.newContext());
+  // The administrator's browser is in Los Angeles; the site should start there.
+  const admin = await withPasskeys(
+    await browser.newContext({ timezoneId: "America/Los_Angeles" }),
+  );
   await admin.goto("/");
   await expect(
     admin.getByRole("heading", { name: "Set up this site" }),
@@ -40,10 +43,25 @@ test("an admin sets up a release and a parent signs it for their child", async (
   await admin.getByRole("link", { name: "Settings" }).click();
   await expect(admin.getByRole("heading", { name: "Settings" })).toBeVisible();
   await admin.getByLabel("Site name").fill("Tom Sawyer Labs");
-  await admin.getByLabel("Time zone").fill("America/Los_Angeles");
-  await admin
-    .getByLabel("People under age need a parent or guardian to sign")
-    .check();
+  // Taken from the browser at setup, with no one having typed it.
+  await expect(admin.getByRole("combobox", { name: "Time zone" })).toHaveValue(
+    "America/Los_Angeles",
+  );
+  // The selector searches the full list of zones.
+  await admin.getByRole("combobox", { name: "Time zone" }).fill("Honolulu");
+  await admin.getByRole("option", { name: "Pacific/Honolulu" }).click();
+  await expect(
+    admin.getByText("Your browser is set to America/Los_Angeles."),
+  ).toBeVisible();
+  await admin.getByRole("button", { name: "Use America/Los_Angeles" }).click();
+  await expect(admin.getByRole("combobox", { name: "Time zone" })).toHaveValue(
+    "America/Los_Angeles",
+  );
+  await admin.getByLabel("People under the adult age can take part").check();
+  // Guardians come with minors unless switched off.
+  await expect(
+    admin.getByLabel("A parent or guardian signs for them"),
+  ).toBeChecked();
   await admin.getByRole("button", { name: "Save settings" }).click();
   await expect(admin.getByText("Saved.")).toBeVisible();
   await expect(

@@ -138,10 +138,17 @@ release.example.org {
 }
 ```
 
-Then, in **Settings**, set "Where the visitor's network address comes from" to the header your
-proxy fills in (`X-Forwarded-For` for Caddy and nginx). Until you do, every signed record shows
-the proxy's address. Only choose a header your proxy overwrites: a header passed through from the
-visitor can be forged, and the address is printed on signed records.
+Then tell Clearance which header carries the visitor's address, with the `CLIENT_IP_HEADER`
+environment variable:
+
+```sh
+CLIENT_IP_HEADER=X-Forwarded-For ./clearance
+```
+
+Without it, every signed record shows the proxy's address. Only name a header your proxy
+overwrites: a header passed through from the visitor can be forged, and the address is printed on
+signed records. This is an environment setting and not one in the admin UI because it describes
+what sits in front of the app, which whoever deploys it knows and a site administrator may not.
 
 ## Cloudflare Workers
 
@@ -154,7 +161,7 @@ bun run worker:deploy
 ```
 
 Tables are created on the first request after a deploy; there is no separate migration step. The
-visitor's address comes from Cloudflare itself, so leave the network address setting alone.
+visitor's address comes from Cloudflare itself, so there is no `CLIENT_IP_HEADER` to set.
 
 ## If you lock yourself out
 

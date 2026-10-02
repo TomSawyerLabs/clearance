@@ -8,7 +8,11 @@ import {
 } from "@simplewebauthn/server";
 import type { Compilable } from "kysely";
 import { z } from "zod";
-import type { Settings } from "../../shared/settings.ts";
+import {
+  guardianship,
+  isTimeZone,
+  type Settings,
+} from "../../shared/settings.ts";
 import {
   badRequest,
   type Caller,
@@ -173,13 +177,21 @@ export const registerInput = z.object({
   /** Asked only when guardian support is on. */
   adult: z.boolean().optional(),
   birthdate: z.iso.date().optional(),
+  /** The browser's time zone. Used once, to set the site's at setup. */
+  timezone: z.string().max(64).optional(),
   /** `guardian`: a parent using a group link to enrol a child, not to join. */
   as: z.enum(["self", "guardian"]).optional(),
 });
 
 type RegisterPlan =
   /** The first administrator. */
-  | { mode: "setup"; userId: string; name: string; origin: string }
+  | {
+      mode: "setup";
+      userId: string;
+      name: string;
+      origin: string;
+      timezone: string | null;
+    }
   /** A new account created through a link. */
   | {
       mode: "invite";
@@ -209,7 +221,7 @@ function birthdateFor(
   now: string,
   mustBeAdult: boolean,
 ): string | null {
-  if (!settings.guardiansEnabled) return null;
+  if (!settings.minorsEnabled) return null;
   if (input.adult === undefined)
     throw badRequest("Say whether you are an adult.");
   if (input.adult) return null;
@@ -243,7 +255,14 @@ export async function registrationOptions(
     if (!input.name) throw badRequest("Enter your name.");
     const origin = originFor(settings, caller);
     user = { id: newId(), name: input.name };
-    plan = { mode: "setup", userId: user.id, name: input.name, origin };
+    plan = {
+      mode: "setup",
+      userId: user.id,
+      name: input.name,
+      origin,
+      timezone:
+        input.timezone && isTimeZone(input.timezone) ? input.timezone : null,
+    };
   } else if (input.invite) {
     const invite = await findInvite(ctx, input.invite);
     if (invite.kind === "claim" || invite.kind === "passkey") {
@@ -256,7 +275,7 @@ export async function registrationOptions(
       const as = input.as ?? "self";
       if (
         as === "guardian" &&
-        (invite.kind !== "group_member" || !settings.guardiansEnabled)
+        (invite.kind !== "group_member" || !guardianship(settings))
       ) {
         throw badRequest("This link cannot be used to enrol a child.");
       }
@@ -389,7 +408,14 @@ export async function registrationVerify(
         created_at: now,
         disabled_at: null,
       }),
-      ...settingQueries(ctx, { origin: plan.origin }, plan.userId),
+      ...settingQueries(
+        ctx,
+        {
+          origin: plan.origin,
+          ...(plan.timezone && { timezone: plan.timezone }),
+        },
+        plan.userId,
+      ),
       audit(
         ctx,
         asCaller,

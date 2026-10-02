@@ -40,7 +40,7 @@ import {
   statusesFor,
 } from "./clearances.ts";
 import { capacityPhrase, renderRecordPdf } from "./pdf.ts";
-import { getUser, isGuardianOf, isMinor, relationTo } from "./people.ts";
+import { getUser, isGuardianOf, isWard, relationTo } from "./people.ts";
 import { getSettings, rpIdOf } from "./settings.ts";
 
 /** The words the signer agrees to. Part of the signed record. */
@@ -103,7 +103,8 @@ export async function signingContext(
     throw notFound("That clearance is not available to sign.");
   }
 
-  const subjectIsMinor = isMinor(subject, settings, now);
+  // "Minor" here means someone a guardian signs for.
+  const subjectIsMinor = isWard(subject, settings, now);
   let capacity: Capacity | null = null;
   let blocked: string | null = null;
   if (signer.id === subject.id) {

@@ -47,11 +47,13 @@ it yourself straight away.
 
 Only the database and the listener are configured from the environment:
 
-| Variable       | Default                      | Meaning                                                               |
-| -------------- | ---------------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL` | `sqlite:./data/clearance.db` | `sqlite:<path>` for the embedded database, or `postgres://...`        |
-| `HOST`, `PORT` | `127.0.0.1`, `8080`          | Where to listen                                                       |
-| `SOCKET_PATH`  | unset                        | Listen on a unix socket instead, for a reverse proxy on the same host |
+| Variable           | Default                      | Meaning                                                                       |
+| ------------------ | ---------------------------- | ----------------------------------------------------------------------------- |
+| `DATABASE_URL`     | `sqlite:./data/clearance.db` | `sqlite:<path>` for the embedded database, or `postgres://...`                |
+| `HOST`, `PORT`     | `127.0.0.1`, `8080`          | Where to listen                                                               |
+| `SOCKET_PATH`      | unset                        | Listen on a unix socket instead, for a reverse proxy on the same host         |
+| `CLIENT_IP_HEADER` | unset                        | The header your reverse proxy puts the visitor's address in, e.g. `X-Real-IP` |
+| `BACKUP_DIR`       | beside the database          | Where automatic backups are written                                           |
 
 [docs/deploy.md](docs/deploy.md) covers each option in detail, including reverse proxies, backups
 and what to do if you lock yourself out.

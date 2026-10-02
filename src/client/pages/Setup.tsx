@@ -96,7 +96,11 @@ export function SetupPage() {
         onSubmit={(event) => {
           event.preventDefault();
           void action.run(async () => {
-            await registerPasskey({ name });
+            await registerPasskey({
+              name,
+              // The site starts out in the administrator's own time zone.
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
             await refresh();
           });
         }}

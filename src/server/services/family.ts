@@ -20,6 +20,7 @@ import {
   requireOversight,
   summarise,
 } from "./people.ts";
+import { guardianship } from "../../shared/settings.ts";
 import { getSettings } from "./settings.ts";
 
 // Guardianship is a relationship between two ordinary accounts. A guardian may
@@ -28,7 +29,7 @@ import { getSettings } from "./settings.ts";
 
 async function requireGuardians(ctx: Ctx) {
   const settings = await getSettings(ctx);
-  if (!settings.guardiansEnabled)
+  if (!guardianship(settings))
     throw badRequest("Guardian support is turned off on this site.");
   return settings;
 }
@@ -68,7 +69,7 @@ export async function getFamily(ctx: Ctx, caller: Caller) {
   }));
 
   return {
-    guardiansEnabled: settings.guardiansEnabled,
+    guardiansEnabled: guardianship(settings),
     me: me!,
     wards: wards.map((ward, index) => ({
       ...ward,

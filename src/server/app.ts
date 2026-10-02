@@ -17,16 +17,23 @@ import * as clearances from "./services/clearances.ts";
 import * as family from "./services/family.ts";
 import * as groups from "./services/groups.ts";
 import { summarise } from "./services/people.ts";
+import { guardianship } from "../shared/settings.ts";
 import { getSettings, updateSettings } from "./services/settings.ts";
 import * as signing from "./services/signing.ts";
 
 export interface AppOptions {
   ctx: Ctx;
   /**
-   * The visitor's address as the runtime knows it, used unless the
-   * `clientIpHeader` setting names a proxy header to trust instead.
+   * The visitor's address as the runtime knows it, used unless
+   * `clientIpHeader` names a proxy header to trust instead.
    */
   clientIp(request: Request): string;
+  /**
+   * The request header a reverse proxy puts the visitor's address in. It is
+   * deployment configuration, not a site setting: it describes what sits in
+   * front of the app, and an administrator of the site cannot know that.
+   */
+  clientIpHeader?: string | null;
   /**
    * Lists the automatic backups this installation has written, newest first.
    * Only an entry point with a disk supplies it.
@@ -46,7 +53,12 @@ type Env = { Variables: { caller: Caller } };
  * The whole HTTP API as one `fetch` handler. It knows nothing about Bun or
  * Workers; each entry point supplies a database and serves the static files.
  */
-export function createApi({ ctx, clientIp, snapshots }: AppOptions) {
+export function createApi({
+  ctx,
+  clientIp,
+  clientIpHeader,
+  snapshots,
+}: AppOptions) {
   const app = new Hono<Env>().basePath("/api");
 
   app.onError((error, c) => {
@@ -78,9 +90,8 @@ export function createApi({ ctx, clientIp, snapshots }: AppOptions) {
         `This site is set up as ${settings.origin}, but the request came from ${origin ?? "an unknown page"}.`,
       );
     }
-    const header = settings.clientIpHeader;
-    const forwarded = header
-      ? c.req.header(header)?.split(",")[0]?.trim()
+    const forwarded = clientIpHeader
+      ? c.req.header(clientIpHeader)?.split(",")[0]?.trim()
       : undefined;
     c.set("caller", {
       user: await auth.userForSession(ctx, getCookie(c, auth.SESSION_COOKIE)),
@@ -121,7 +132,10 @@ export function createApi({ ctx, clientIp, snapshots }: AppOptions) {
       site: {
         name: settings.siteName,
         timezone: settings.timezone,
-        guardiansEnabled: settings.guardiansEnabled,
+        /** People under the adult age can have accounts. */
+        minorsEnabled: settings.minorsEnabled,
+        /** ...and a parent or guardian signs for them. */
+        guardiansEnabled: guardianship(settings),
         adultAge: settings.adultAge,
       },
       me: me ? { ...me, admin: caller.user!.is_admin === 1 } : null,

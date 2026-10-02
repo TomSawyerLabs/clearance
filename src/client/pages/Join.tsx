@@ -153,6 +153,9 @@ function SignedOut({ token, invite, setEnrolling }: Props) {
   const [birthdate, setBirthdate] = useState("");
   const create = useAction();
   const login = useAction();
+  // Two separate things: whether the site takes minors at all (so age is
+  // asked), and whether a parent or guardian signs for them.
+  const minors = state.site.minorsEnabled;
   const guardians = state.site.guardiansEnabled;
   const age = state.site.adultAge;
 
@@ -182,7 +185,7 @@ function SignedOut({ token, invite, setEnrolling }: Props) {
   }
 
   // Only a group member link can be used by a minor or to enrol a child.
-  const choice = invite.kind === "group_member" && guardians;
+  const choice = invite.kind === "group_member" && minors;
   const intro =
     invite.kind === "guardian"
       ? `${invite.targetName} has asked you to be their parent or guardian here, so that you can sign documents on their behalf.`
@@ -198,7 +201,7 @@ function SignedOut({ token, invite, setEnrolling }: Props) {
             await registerPasskey({
               invite: token,
               name,
-              ...(guardians && { adult: !choice || who !== "minor" }),
+              ...(minors && { adult: !choice || who !== "minor" }),
               ...(choice && who === "minor" && { birthdate }),
               ...(choice && who === "guardian" && { as: "guardian" as const }),
             });
@@ -226,10 +229,12 @@ function SignedOut({ token, invite, setEnrolling }: Props) {
                   value="minor"
                   label={`I am joining, and I am under ${age}`}
                 />
-                <Radio
-                  value="guardian"
-                  label="I am a parent or guardian enrolling my child"
-                />
+                {guardians && (
+                  <Radio
+                    value="guardian"
+                    label="I am a parent or guardian enrolling my child"
+                  />
+                )}
               </Stack>
             </Radio.Group>
           )}
@@ -247,7 +252,11 @@ function SignedOut({ token, invite, setEnrolling }: Props) {
           {choice && who === "minor" && (
             <TextInput
               label="Your date of birth"
-              description="A parent or guardian will need to sign for you. You can send them a link after this."
+              description={
+                guardians
+                  ? "A parent or guardian will need to sign for you. You can send them a link after this."
+                  : undefined
+              }
               type="date"
               value={birthdate}
               onChange={(event) => setBirthdate(event.currentTarget.value)}

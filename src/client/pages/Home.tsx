@@ -207,11 +207,14 @@ export function HomePage() {
             <ClearanceList
               subjectId={data.me.id}
               clearances={data.me.clearances}
-              signAs={data.me.minor ? "minor" : "self"}
+              // Without guardians, a minor signs for themself like anyone else.
+              signAs={data.me.minor && data.guardiansEnabled ? "minor" : "self"}
             />
           </Stack>
 
-          {data.me.minor && <MyGuardians family={data} />}
+          {data.me.minor && data.guardiansEnabled && (
+            <MyGuardians family={data} />
+          )}
 
           {state.site.guardiansEnabled && !data.me.minor && (
             <Stack gap="sm">

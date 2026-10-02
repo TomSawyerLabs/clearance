@@ -21,6 +21,7 @@ import {
   inviteProblem,
 } from "./invites.ts";
 import { getUser, isMinor, summarise } from "./people.ts";
+import { guardianship } from "../../shared/settings.ts";
 import { getSettings } from "./settings.ts";
 
 export const groupInput = z.object({
@@ -364,7 +365,7 @@ export async function acceptInvite(ctx: Ctx, caller: Caller, token: string) {
     );
   }
   if (invite.kind === "guardian") {
-    if (!settings.guardiansEnabled)
+    if (!guardianship(settings))
       throw badRequest("Guardian support is turned off.");
     if (invite.target_user_id === user.id)
       throw badRequest("You cannot be your own guardian.");

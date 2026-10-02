@@ -47,6 +47,13 @@ From Cameron, later on 2026-10-01:
   student stays, because options are the administrator's to set at runtime.
 - Signed releases do not expire by default. Expiry stays as a per-document option.
 - Answers to a document's questions are visible to the person's group managers.
+- Where the visitor's network address comes from is an environment setting (`CLIENT_IP_HEADER`),
+  not a runtime one: it describes the proxy in front of the app. This narrows the earlier "all
+  settings are runtime" rule to settings about the site.
+- The time zone is chosen from a list, and starts as the first administrator's browser zone.
+- Support for minors is the opt-in (`minorsEnabled`, off by default). Guardians are on by default
+  (`guardiansEnabled`) and take effect once minors are enabled. With minors on and guardians off,
+  a minor signs for themself.
 
 Chosen by Claude to satisfy the above (open to change, each is isolated):
 

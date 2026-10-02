@@ -45,6 +45,9 @@ export interface SiteState {
   site: {
     name: string;
     timezone: string;
+    /** People under the adult age can have accounts. */
+    minorsEnabled: boolean;
+    /** ...and a parent or guardian signs for them. False whenever minors are off. */
     guardiansEnabled: boolean;
     adultAge: number;
   };
@@ -146,6 +149,7 @@ export interface RegisterInput {
   adult?: boolean;
   birthdate?: string;
   as?: "self" | "guardian";
+  timezone?: string;
 }
 
 /** Creates a passkey. The server decides what it is for from the input and the session. */

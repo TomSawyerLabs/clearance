@@ -2,7 +2,7 @@ import {
   Alert,
   Button,
   Group,
-  NativeSelect,
+  Select,
   NumberInput,
   Stack,
   Switch,
@@ -15,8 +15,18 @@ import { api, type Settings } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { useLoad, useSite } from "../../site.tsx";
 
+/** Every zone the browser knows, plus the current value in case it is not among them. */
+function timeZones(current: string): string[] {
+  const known =
+    typeof Intl.supportedValuesOf === "function"
+      ? Intl.supportedValuesOf("timeZone")
+      : [];
+  return [...new Set(["UTC", current, ...known])].sort();
+}
+
 function Form({ initial }: { initial: Settings }) {
   const { refresh } = useSite();
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [values, setValues] = useState(initial);
   const [saved, setSaved] = useState(false);
   const action = useAction();
@@ -45,39 +55,69 @@ function Form({ initial }: { initial: Settings }) {
           onChange={(event) => set("siteName", event.currentTarget.value)}
           required
         />
-        <TextInput
-          label="Time zone"
-          description="An IANA zone name such as America/Los_Angeles. Times are stored in UTC and shown in this zone."
-          value={values.timezone}
-          onChange={(event) => set("timezone", event.currentTarget.value)}
-          required
-        />
-
-        <Stack gap="sm">
-          <Title order={4}>Parents and guardians</Title>
-          <Switch
-            label="People under age need a parent or guardian to sign"
-            description="When on, new accounts are asked whether they are an adult, and parents can add children and sign for them."
-            checked={values.guardiansEnabled}
-            onChange={(event) =>
-              set("guardiansEnabled", event.currentTarget.checked)
-            }
+        <Stack gap="xs">
+          <Select
+            label="Time zone"
+            description="Times are stored in UTC and shown, on screen and on signed records, in this zone. Type to search."
+            data={timeZones(values.timezone)}
+            value={values.timezone}
+            onChange={(value) => value && set("timezone", value)}
+            searchable
+            allowDeselect={false}
+            maw={420}
           />
-          <NumberInput
-            label="Age at which someone signs for themself"
-            value={values.adultAge}
-            onChange={(value) =>
-              typeof value === "number" && set("adultAge", value)
-            }
-            min={13}
-            max={25}
-            allowDecimal={false}
-            maw={260}
-          />
+          {browserZone !== values.timezone && (
+            <Group gap="xs">
+              <Text size="sm">Your browser is set to {browserZone}.</Text>
+              <Button
+                size="compact-xs"
+                variant="light"
+                onClick={() => set("timezone", browserZone)}
+              >
+                Use {browserZone}
+              </Button>
+            </Group>
+          )}
         </Stack>
 
         <Stack gap="sm">
-          <Title order={4}>Sign-in and network</Title>
+          <Title order={4}>Minors</Title>
+          <Switch
+            label="People under the adult age can take part"
+            description="When on, new accounts are asked whether they are an adult. Leave it off if everyone here is an adult."
+            checked={values.minorsEnabled}
+            onChange={(event) =>
+              set("minorsEnabled", event.currentTarget.checked)
+            }
+          />
+          {values.minorsEnabled && (
+            <>
+              <Switch
+                label="A parent or guardian signs for them"
+                description="Parents get their own accounts, can add their children, and sign on their behalf. Turn this off only if minors may sign for themselves."
+                checked={values.guardiansEnabled}
+                onChange={(event) =>
+                  set("guardiansEnabled", event.currentTarget.checked)
+                }
+              />
+              <NumberInput
+                label="Adult age"
+                description="From this age, people sign for themselves."
+                value={values.adultAge}
+                onChange={(value) =>
+                  typeof value === "number" && set("adultAge", value)
+                }
+                min={13}
+                max={25}
+                allowDecimal={false}
+                maw={260}
+              />
+            </>
+          )}
+        </Stack>
+
+        <Stack gap="sm">
+          <Title order={4}>Sign-in and site address</Title>
           <NumberInput
             label="Days before someone has to sign in again"
             value={values.sessionDays}
@@ -88,28 +128,6 @@ function Form({ initial }: { initial: Settings }) {
             max={365}
             allowDecimal={false}
             maw={260}
-          />
-          <NativeSelect
-            label="Where the visitor's network address comes from"
-            description="It is printed on signed records. Behind a reverse proxy, choose the header that proxy sets; a header your proxy does not overwrite can be forged by a visitor."
-            data={[
-              {
-                value: "",
-                label:
-                  "The connection itself (no reverse proxy, or Cloudflare Workers)",
-              },
-              { value: "x-forwarded-for", label: "X-Forwarded-For header" },
-              { value: "x-real-ip", label: "X-Real-IP header" },
-              { value: "cf-connecting-ip", label: "CF-Connecting-IP header" },
-            ]}
-            value={values.clientIpHeader ?? ""}
-            onChange={(event) =>
-              set(
-                "clientIpHeader",
-                (event.currentTarget.value ||
-                  null) as Settings["clientIpHeader"],
-              )
-            }
           />
           <TextInput
             label="Site address"

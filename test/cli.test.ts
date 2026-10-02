@@ -11,7 +11,7 @@ const PORT = 8796;
 const ORIGIN = `http://localhost:${PORT}`;
 const entry = join(import.meta.dir, "../src/entry/bun.ts");
 const dir = mkdtempSync(join(tmpdir(), "clearance-cli-"));
-const env = {
+const env: Record<string, string | undefined> = {
   ...process.env,
   DATABASE_URL: `sqlite:${join(dir, "clearance.db")}`,
   PORT: String(PORT),
@@ -22,7 +22,10 @@ async function cli(...args: string[]) {
   return cliWith(env, ...args);
 }
 
-async function cliWith(environment: typeof env, ...args: string[]) {
+async function cliWith(
+  environment: Record<string, string | undefined>,
+  ...args: string[]
+) {
   const child = Bun.spawn(["bun", entry, ...args], {
     env: environment,
     stdout: "pipe",
@@ -176,7 +179,22 @@ test("an operator backs up, restores elsewhere, and matches a document to its fi
   });
   server?.kill();
   await server?.exited;
+  // Restarted as it would run behind a reverse proxy.
+  env.CLIENT_IP_HEADER = "X-Test-IP";
   await startServer();
+  const viaProxy = new TestClient(
+    (request) => fetch(request),
+    "198.51.100.7",
+    ORIGIN,
+  );
+  viaProxy.authenticator = admin.authenticator;
+  expect((await viaProxy.login()).status).toBe(200);
+  await viaProxy.ok("PATCH", "/admin/settings", { sessionDays: 31 });
+  // The address on the record is the one the proxy reported, not the socket's.
+  expect((await viaProxy.ok("GET", "/admin/audit"))[0]).toMatchObject({
+    action: "settings.update",
+    ip: "198.51.100.7",
+  });
   let snapshots: { name: string; bytes: number }[] = [];
   for (let attempt = 0; attempt < 50 && snapshots.length === 0; attempt++) {
     await Bun.sleep(100);

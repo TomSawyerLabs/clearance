@@ -42,6 +42,12 @@ import {
 //   SOCKET_PATH   listen on a unix socket instead, for a reverse proxy on the same host
 //   BACKUP_DIR    where automatic backups are written (default: a "backups"
 //                 directory beside the SQLite file, or ./data/backups)
+//   CLIENT_IP_HEADER
+//                 the request header your reverse proxy puts the visitor's
+//                 address in, e.g. X-Real-IP. Unset: the connection's own
+//                 address. The address is printed on signed records, so only
+//                 name a header the proxy overwrites; one passed through from
+//                 the visitor can be forged.
 
 /** Looks up a static file by URL path, e.g. `/assets/app.js`. */
 export type AssetSource = (path: string) => Blob | null;
@@ -93,6 +99,14 @@ export async function main(
         ? join(dirname(databaseUrl.slice("sqlite:".length)), "backups")
         : "./data/backups"),
   );
+  const clientIpHeader =
+    process.env.CLIENT_IP_HEADER?.trim().toLowerCase() || null;
+  if (clientIpHeader && !/^[a-z0-9-]+$/.test(clientIpHeader)) {
+    console.error(
+      `CLIENT_IP_HEADER must be a header name such as X-Real-IP, not "${process.env.CLIENT_IP_HEADER}".`,
+    );
+    process.exit(2);
+  }
   const store = openStore(databaseUrl);
   const applied = await migrateToLatest(store.db);
   if (applied.length) console.log(`Applied migrations: ${applied.join(", ")}`);
@@ -148,6 +162,7 @@ export async function main(
   const api = createApi({
     ctx,
     clientIp: (request) => server.requestIP(request)?.address ?? "",
+    clientIpHeader,
     snapshots: async () => listSnapshots(backupDir),
   });
 

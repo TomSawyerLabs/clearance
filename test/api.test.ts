@@ -341,7 +341,7 @@ for (const engine of ENGINES) {
     });
 
     test("guardians: a parent enrols a child and signs for them", async () => {
-      await admin.ok("PATCH", "/admin/settings", { guardiansEnabled: true });
+      await admin.ok("PATCH", "/admin/settings", { minorsEnabled: true });
       const group = await makeGroup();
       const clearanceId = await makeClearance();
 
@@ -434,7 +434,7 @@ for (const engine of ENGINES) {
     });
 
     test("guardians: a student signs up first and brings in a parent", async () => {
-      await admin.ok("PATCH", "/admin/settings", { guardiansEnabled: true });
+      await admin.ok("PATCH", "/admin/settings", { minorsEnabled: true });
       const group = await makeGroup();
       const clearanceId = await makeClearance({
         minorPolicy: "guardian_and_minor",
@@ -578,6 +578,97 @@ for (const engine of ENGINES) {
           })
         ).status,
       ).toBe(409);
+    });
+
+    test("minors are opt-in, and guardians come with them unless switched off", async () => {
+      // Out of the box nobody is asked their age, and guardian links do nothing.
+      expect(await admin.ok("GET", "/admin/settings")).toMatchObject({
+        minorsEnabled: false,
+        guardiansEnabled: true,
+      });
+      expect((await admin.ok("GET", "/state")).site).toMatchObject({
+        minorsEnabled: false,
+        guardiansEnabled: false,
+      });
+      const group = await makeGroup();
+      const clearanceId = await makeClearance();
+      const plain = await join(group.memberLink, {
+        name: "No Age Asked",
+        birthdate: "2012-01-01",
+      });
+      expect((await plain.ok("GET", "/state")).me.minor).toBe(false);
+      expect(
+        (
+          await plain.post("/family/wards", {
+            name: "Kid",
+            birthdate: "2015-01-01",
+          })
+        ).status,
+      ).toBe(400);
+
+      // Opting in to minors brings guardians with it.
+      await admin.ok("PATCH", "/admin/settings", { minorsEnabled: true });
+      expect((await admin.ok("GET", "/state")).site).toMatchObject({
+        minorsEnabled: true,
+        guardiansEnabled: true,
+      });
+      const ward = await join(group.memberLink, {
+        name: "Ward",
+        adult: false,
+        birthdate: "2012-01-01",
+      });
+      expect(await statusOf(ward, ward.userId!, clearanceId)).toMatchObject({
+        waitingOn: ["guardian"],
+      });
+      expect((await ward.ok("GET", "/state")).me).toMatchObject({
+        minor: true,
+        needsGuardian: true,
+      });
+
+      // With guardians switched off, a minor is still a minor but signs personally.
+      await admin.ok("PATCH", "/admin/settings", { guardiansEnabled: false });
+      expect((await ward.ok("GET", "/state")).me).toMatchObject({
+        minor: true,
+        needsGuardian: false,
+      });
+      expect((await ward.post("/family/guardian-invite")).status).toBe(400);
+      const signed = await ward.sign(clearanceId, ward.userId!, ANSWERS);
+      expect(signed.body.granted).toBe(true);
+      const record = await ward.ok(
+        "GET",
+        `/signatures/${signed.body.signatureId}`,
+      );
+      expect(record.record.capacity).toBe("self");
+    });
+
+    test("the site starts in the first administrator's time zone", async () => {
+      await h.close();
+      h = await createHarness(engine);
+      const first = h.client();
+      expect(
+        (await first.register({ name: "Ada", timezone: "America/Los_Angeles" }))
+          .status,
+      ).toBe(200);
+      expect((await first.ok("GET", "/state")).site.timezone).toBe(
+        "America/Los_Angeles",
+      );
+      // A zone the server does not know is ignored, not stored.
+      await h.close();
+      h = await createHarness(engine);
+      const second = h.client();
+      await second.register({ name: "Ada", timezone: "Mars/Olympus" });
+      expect((await second.ok("GET", "/state")).site.timezone).toBe("UTC");
+      // The network address source is no longer something an administrator sets.
+      expect(
+        (
+          await second.request("PATCH", "/admin/settings", {
+            clientIpHeader: "x-real-ip",
+          })
+        ).status,
+      ).toBe(200);
+      expect(await second.ok("GET", "/admin/settings")).not.toHaveProperty(
+        "clientIpHeader",
+      );
     });
 
     test("a published document's fingerprint can be reproduced from its files", async () => {

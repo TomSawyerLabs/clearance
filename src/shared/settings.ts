@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-// Every setting is stored in the database and editable at runtime by an
-// administrator. Nothing here is read from the environment.
+// Every setting here is stored in the database and editable at runtime by an
+// administrator. What describes the deployment instead of the site (the
+// database, the listener, the proxy in front) comes from the environment.
 
 export const settingsSchema = z.object({
   /** Shown in the UI, on signed records, and as the passkey relying-party name. */
@@ -12,22 +13,23 @@ export const settingsSchema = z.object({
    * hostname, so changing the hostname invalidates every existing passkey.
    */
   origin: z.url().nullable(),
-  /** IANA zone used when printing times on signed records. Storage is always UTC. */
-  timezone: z.string().refine(isTimeZone, "Not a recognised IANA time zone"),
-  /** Opt-in: minors need a parent or guardian account to sign for them. */
-  guardiansEnabled: z.boolean(),
-  /** People younger than this are minors when guardian support is on. */
-  adultAge: z.number().int().min(13).max(25),
   /**
-   * Which request header carries the visitor's address. Null means use what
-   * the runtime reports (the socket peer on Bun, Cloudflare's own value on
-   * Workers). Set it to the header your reverse proxy fills in. The address is
-   * printed on signed records, so a header a visitor can forge is worse than
-   * none.
+   * IANA zone used when printing times on signed records. Storage is always
+   * UTC. Taken from the first administrator's browser at setup.
    */
-  clientIpHeader: z
-    .enum(["x-forwarded-for", "x-real-ip", "cf-connecting-ip"])
-    .nullable(),
+  timezone: z.string().refine(isTimeZone, "Not a recognised IANA time zone"),
+  /**
+   * Opt-in: people under the adult age may have accounts. While off, nobody
+   * is asked their age and everyone signs for themself.
+   */
+  minorsEnabled: z.boolean(),
+  /**
+   * A minor needs a parent or guardian account to sign for them. On by
+   * default; it only has an effect once minors are enabled.
+   */
+  guardiansEnabled: z.boolean(),
+  /** People younger than this are minors. */
+  adultAge: z.number().int().min(13).max(25),
   /** How long a sign-in lasts. */
   sessionDays: z.number().int().min(1).max(365),
   /**
@@ -45,15 +47,22 @@ export const DEFAULT_SETTINGS: Settings = {
   siteName: "Clearance",
   origin: null,
   timezone: "UTC",
-  guardiansEnabled: false,
+  minorsEnabled: false,
+  guardiansEnabled: true,
   adultAge: 18,
-  clientIpHeader: null,
   sessionDays: 30,
   backupEveryHours: 24,
   backupKeep: 30,
 };
 
-function isTimeZone(zone: string): boolean {
+/** Whether guardians are in play: the site takes minors, and requires a guardian for them. */
+export function guardianship(
+  settings: Pick<Settings, "minorsEnabled" | "guardiansEnabled">,
+): boolean {
+  return settings.minorsEnabled && settings.guardiansEnabled;
+}
+
+export function isTimeZone(zone: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: zone });
     return true;

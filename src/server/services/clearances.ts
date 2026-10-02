@@ -25,7 +25,7 @@ import {
 } from "../../shared/documentFile.ts";
 import { newId } from "../lib/util.ts";
 import { audit } from "./audit.ts";
-import { isMinor, requireOversight } from "./people.ts";
+import { isWard, requireOversight } from "./people.ts";
 
 // ---------------------------------------------------------------------------
 // Definitions
@@ -367,7 +367,7 @@ export function requiredCapacities(
   settings: Settings,
   now: string,
 ): Capacity[] {
-  if (!isMinor(user, settings, now)) return ["self"];
+  if (!isWard(user, settings, now)) return ["self"];
   return clearance.minor_policy === "guardian_and_minor"
     ? ["guardian", "minor"]
     : ["guardian"];
@@ -448,7 +448,7 @@ export async function statusesFor(
         );
         if (grant.expires_at && grant.expires_at <= now) {
           lapsed = { state: "expired", reason: null };
-        } else if (grant.signed_as_minor && !isMinor(user, settings, now)) {
+        } else if (grant.signed_as_minor && !isWard(user, settings, now)) {
           lapsed = {
             state: "stale",
             reason:

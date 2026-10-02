@@ -114,7 +114,7 @@ test("the Worker runs setup, groups, signing, PDF and backups on D1", async () =
   });
 
   await admin.ok("PATCH", "/admin/settings", {
-    guardiansEnabled: true,
+    minorsEnabled: true,
     timezone: "America/Los_Angeles",
   });
   const group = await admin.ok("POST", "/groups", {

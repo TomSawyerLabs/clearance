@@ -1,4 +1,4 @@
-import type { Settings } from "../../shared/settings.ts";
+import { guardianship, type Settings } from "../../shared/settings.ts";
 import {
   type Caller,
   type Ctx,
@@ -9,14 +9,26 @@ import {
 import type { UsersTable } from "../db/schema.ts";
 import { ageOn } from "../lib/util.ts";
 
-/** Minors only exist as a concept when guardian support is switched on. */
+/** Under the adult age. Nobody is, unless the site has opted in to minors. */
 export function isMinor(
   user: Pick<UsersTable, "birthdate">,
   settings: Settings,
   now: string,
 ) {
-  if (!settings.guardiansEnabled || !user.birthdate) return false;
+  if (!settings.minorsEnabled || !user.birthdate) return false;
   return ageOn(user.birthdate, now) < settings.adultAge;
+}
+
+/**
+ * A minor who needs a parent or guardian to sign for them. With guardians
+ * switched off, a minor signs for themself like anyone else.
+ */
+export function isWard(
+  user: Pick<UsersTable, "birthdate">,
+  settings: Settings,
+  now: string,
+) {
+  return guardianship(settings) && isMinor(user, settings, now);
 }
 
 export async function getUser(ctx: Ctx, id: string): Promise<UsersTable> {
@@ -107,7 +119,7 @@ export async function summarise(
   users: UsersTable[],
 ): Promise<PersonSummary[]> {
   const now = ctx.now();
-  const minors = users.filter((user) => isMinor(user, settings, now));
+  const minors = users.filter((user) => isWard(user, settings, now));
   const guarded = new Set<string>();
   if (minors.length) {
     const rows = await ctx.db
@@ -128,7 +140,7 @@ export async function summarise(
       name: user.name,
       minor,
       managed: user.managed === 1,
-      needsGuardian: minor && !guarded.has(user.id),
+      needsGuardian: isWard(user, settings, now) && !guarded.has(user.id),
     };
   });
 }
