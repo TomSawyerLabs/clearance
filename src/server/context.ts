@@ -8,6 +8,12 @@ export interface Ctx {
   db: Kysely<Database>;
   /** ISO-8601 UTC. Injected so tests can move the clock. */
   now(): string;
+  /**
+   * The site's public address when the deployment states it (PUBLIC_BASE_URL).
+   * Null means it was not stated, and the address the first administrator
+   * registered from is used instead.
+   */
+  origin: string | null;
 }
 
 /** Who is asking, and from where. Built per request. */
@@ -22,8 +28,9 @@ export interface Caller {
 export function createCtx(
   store: Store,
   now: () => string = () => new Date().toISOString(),
+  origin: string | null = null,
 ): Ctx {
-  return { store, db: store.db, now };
+  return { store, db: store.db, now, origin };
 }
 
 export class HttpError extends Error {

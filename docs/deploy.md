@@ -7,8 +7,12 @@ Two things are true of all of them:
 - **Passkeys need HTTPS.** Browsers only allow passkeys on `https://` pages (and on
   `http://localhost`). Serve Clearance behind something that terminates TLS.
 - **The first visitor becomes the administrator.** Until someone registers, the site shows a setup
-  page to anyone. Open it yourself as soon as it is reachable. The address in your browser at that
-  moment is recorded as the site's address.
+  page to anyone. Open it yourself as soon as it is reachable.
+- **State the site's address.** Set `PUBLIC_BASE_URL` to the address people will use, for example
+  `https://release.example.org` (exactly an origin: no path, no trailing slash). Passkeys are
+  bound to its hostname and requests from any other address are refused, setup included. If you
+  leave it unset, the address the first administrator registered from is remembered and used; that
+  is convenient for trying it on `localhost` and one more thing to get wrong in production.
 
 ## Bare metal: one executable, embedded database
 
@@ -183,19 +187,9 @@ visitor's address comes from Cloudflare itself, so there is no `CLIENT_IP_HEADER
   Better, add a second passkey on another device from the **Account** page as soon as you finish
   setup.
 
-- **Set the site address wrong.** Requests are refused unless they come from the configured
-  address. Fix it from the server:
-
-  ```sh
-  clearance config set origin https://release.example.org
-  ```
-
-  On Workers:
-
-  ```sh
-  bunx wrangler d1 execute clearance --remote \
-    --command "update settings set value = '\"https://release.example.org\"' where key = 'origin'"
-  ```
+- **The site address is wrong.** Requests are refused unless they come from the site's address.
+  Set `PUBLIC_BASE_URL` to the right one and restart; it overrides whatever was recorded at setup.
+  On Workers, set it as a var in `wrangler.jsonc` and redeploy.
 
 - **Changed the hostname.** Passkeys are bound to the hostname they were created on, so every
   existing passkey stops working. Avoid it. If you must, there is currently no migration path short

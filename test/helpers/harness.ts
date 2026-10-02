@@ -198,13 +198,21 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(engine: EngineName): Promise<Harness> {
+export async function createHarness(
+  engine: EngineName,
+  /** As if the deployment had set PUBLIC_BASE_URL. */
+  options: { origin?: string } = {},
+): Promise<Harness> {
   const { store, close } = await openEngine(engine);
 
   let now = new Date("2026-10-01T18:00:00.000Z").getTime();
   // Each call moves the clock a little, as real requests would, so that
   // ordering by timestamp is meaningful in tests.
-  const ctx = createCtx(store, () => new Date((now += 1000)).toISOString());
+  const ctx = createCtx(
+    store,
+    () => new Date((now += 1000)).toISOString(),
+    options.origin ?? null,
+  );
   const api = createApi({
     ctx,
     clientIp: (request) => request.headers.get("x-test-ip") ?? "",

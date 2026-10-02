@@ -16,7 +16,7 @@ import {
   ENGINES,
   type Harness,
   prepareEngine,
-  type TestClient,
+  TestClient,
 } from "./helpers/harness.ts";
 
 // Every scenario runs against every database engine through the real HTTP
@@ -639,6 +639,51 @@ for (const engine of ENGINES) {
         `/signatures/${signed.body.signatureId}`,
       );
       expect(record.record.capacity).toBe("self");
+    });
+
+    test("the site address belongs to the deployment, not to the administrator", async () => {
+      // Recorded at setup when the deployment did not state it...
+      const recorded = await admin.ok("GET", "/admin/settings");
+      expect(recorded).toMatchObject({
+        origin: "https://clearance.test",
+        originFromEnvironment: false,
+      });
+      // ...and not something the settings page can change.
+      await admin.ok("PATCH", "/admin/settings", {
+        origin: "https://elsewhere.test",
+        siteName: "Renamed",
+      });
+      expect(await admin.ok("GET", "/admin/settings")).toMatchObject({
+        origin: "https://clearance.test",
+        siteName: "Renamed",
+      });
+
+      // Stated by the deployment: setup itself is refused from anywhere else,
+      // so the first administrator's passkey is bound to the right hostname.
+      await h.close();
+      h = await createHarness(engine, {
+        origin: "https://release.example.org",
+      });
+      const wrongDoor = h.client();
+      const refused = await wrongDoor.register({ name: "Ada" });
+      expect(refused.status).toBe(403);
+      expect((refused.body as { error?: string }).error).toContain(
+        "https://release.example.org",
+      );
+      expect((await wrongDoor.ok("GET", "/state")).setupNeeded).toBe(true);
+
+      const rightDoor = new TestClient(
+        (request) => h.api.fetch(request),
+        "203.0.113.9",
+        "https://release.example.org",
+      );
+      expect((await rightDoor.register({ name: "Ada" })).status).toBe(200);
+      expect(await rightDoor.ok("GET", "/admin/settings")).toMatchObject({
+        origin: "https://release.example.org",
+        originFromEnvironment: true,
+      });
+      await rightDoor.logout();
+      expect((await rightDoor.login()).status).toBe(200);
     });
 
     test("the site starts in the first administrator's time zone", async () => {

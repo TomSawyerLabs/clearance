@@ -52,6 +52,7 @@ Only the database and the listener are configured from the environment:
 | `DATABASE_URL`     | `sqlite:./data/clearance.db` | `sqlite:<path>` for the embedded database, or `postgres://...`                |
 | `HOST`, `PORT`     | `127.0.0.1`, `8080`          | Where to listen                                                               |
 | `SOCKET_PATH`      | unset                        | Listen on a unix socket instead, for a reverse proxy on the same host         |
+| `PUBLIC_BASE_URL`  | recorded at setup            | The address people reach the site at, e.g. `https://release.example.org`      |
 | `CLIENT_IP_HEADER` | unset                        | The header your reverse proxy puts the visitor's address in, e.g. `X-Real-IP` |
 | `BACKUP_DIR`       | beside the database          | Where automatic backups are written                                           |
 

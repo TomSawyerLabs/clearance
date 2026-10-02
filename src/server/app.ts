@@ -382,7 +382,11 @@ export function createApi({
   app.get("/admin/settings", async (c) => {
     const user = requireUser(c.get("caller"));
     if (!user.is_admin) throw forbidden();
-    return c.json(await getSettings(ctx));
+    return c.json({
+      ...(await getSettings(ctx)),
+      /** Whether the site address was stated by the deployment or recorded at setup. */
+      originFromEnvironment: ctx.origin !== null,
+    });
   });
   app.patch("/admin/settings", async (c) =>
     c.json(await updateSettings(ctx, c.get("caller"), await body(c))),

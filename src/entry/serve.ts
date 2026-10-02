@@ -42,6 +42,11 @@ import {
 //   SOCKET_PATH   listen on a unix socket instead, for a reverse proxy on the same host
 //   BACKUP_DIR    where automatic backups are written (default: a "backups"
 //                 directory beside the SQLite file, or ./data/backups)
+//   PUBLIC_BASE_URL
+//                 the address people reach the site at, e.g.
+//                 https://release.example.org. Passkeys are bound to its
+//                 hostname and requests from anywhere else are refused. Unset:
+//                 the address the first administrator registered from.
 //   CLIENT_IP_HEADER
 //                 the request header your reverse proxy puts the visitor's
 //                 address in, e.g. X-Real-IP. Unset: the connection's own
@@ -56,7 +61,7 @@ const USAGE = `Usage:
   clearance [serve]              run the server
   clearance config               print the current settings
   clearance config set KEY JSON  change a setting without the web UI, e.g.
-                                 clearance config set origin '"https://release.example.org"'
+                                 clearance config set siteName "Tom Sawyer Labs"
   clearance recovery-link [NAME] print a one-time link that gives an administrator
                                  (the first one, or the one named) a new passkey
   clearance backup [FILE]        write a backup now (default: into the backup directory)
@@ -107,10 +112,25 @@ export async function main(
     );
     process.exit(2);
   }
+  const publicOrigin = process.env.PUBLIC_BASE_URL?.trim() || null;
+  if (publicOrigin) {
+    let valid = false;
+    try {
+      valid = new URL(publicOrigin).origin === publicOrigin;
+    } catch {
+      // not a URL at all
+    }
+    if (!valid) {
+      console.error(
+        `PUBLIC_BASE_URL must be exactly an origin such as https://release.example.org (no path, no trailing slash), not "${publicOrigin}".`,
+      );
+      process.exit(2);
+    }
+  }
   const store = openStore(databaseUrl);
   const applied = await migrateToLatest(store.db);
   if (applied.length) console.log(`Applied migrations: ${applied.join(", ")}`);
-  const ctx = createCtx(store);
+  const ctx = createCtx(store, undefined, publicOrigin);
 
   if (command === "migrate") {
     await store.close();

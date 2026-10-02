@@ -95,6 +95,20 @@ test("an operator recovers a locked-out administrator and edits settings", async
     0,
   );
   expect((await cli("config", "set", "adultAge", "200")).code).toBe(2);
+
+  // PUBLIC_BASE_URL has to be exactly an origin, and when given it is the
+  // site's address whatever was recorded at setup.
+  const sloppy = await cliWith(
+    { ...env, PUBLIC_BASE_URL: "https://release.example.org/" },
+    "config",
+  );
+  expect(sloppy.code).toBe(2);
+  expect(sloppy.stderr).toContain("PUBLIC_BASE_URL");
+  const stated = await cliWith(
+    { ...env, PUBLIC_BASE_URL: "https://release.example.org" },
+    "config",
+  );
+  expect(JSON.parse(stated.stdout).origin).toBe("https://release.example.org");
   expect(JSON.parse((await cli("config")).stdout)).toMatchObject({
     siteName: "Tom Sawyer Labs",
     origin: ORIGIN,

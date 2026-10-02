@@ -10,6 +10,20 @@ import { d1Store } from "../server/db/store.ts";
 
 interface Env {
   DB: D1Database;
+  /** Optional var: the site's public address, e.g. https://release.example.org. */
+  PUBLIC_BASE_URL?: string;
+}
+
+/** A stated address must be exactly an origin; anything else is ignored loudly. */
+function publicOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    if (new URL(value).origin === value) return value;
+  } catch {
+    // fall through
+  }
+  console.error(`PUBLIC_BASE_URL is not an origin: ${value}`);
+  return null;
 }
 
 let ready: Promise<ReturnType<typeof createApi>> | undefined;
@@ -23,7 +37,7 @@ function api(env: Env) {
     const store = d1Store(env.DB);
     await migrateToLatest(store.db);
     return createApi({
-      ctx: createCtx(store),
+      ctx: createCtx(store, undefined, publicOrigin(env.PUBLIC_BASE_URL)),
       // Set by Cloudflare's edge itself; a visitor cannot forge it.
       clientIp: (request) => request.headers.get("cf-connecting-ip") ?? "",
     });

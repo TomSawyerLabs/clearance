@@ -50,6 +50,9 @@ From Cameron, later on 2026-10-01:
 - Where the visitor's network address comes from is an environment setting (`CLIENT_IP_HEADER`),
   not a runtime one: it describes the proxy in front of the app. This narrows the earlier "all
   settings are runtime" rule to settings about the site.
+- The site address is an environment setting too (`PUBLIC_BASE_URL`), for the same reason, and is
+  shown read-only in Settings. Left unset, the address recorded at setup is used, so that trying
+  the app on `localhost` still needs no configuration.
 - The time zone is chosen from a list, and starts as the first administrator's browser zone.
 - Support for minors is the opt-in (`minorsEnabled`, off by default). Guardians are on by default
   (`guardiansEnabled`) and take effect once minors are enabled. With minors on and guardians off,
@@ -171,7 +174,9 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
 - Do not bring back Kysely's Migrator; it fails on D1.
 - Do not let group managers issue new-passkey links.
 - Do not add columns of types other than `text` and `integer`.
-- Do not read configuration from environment variables beyond database and listener settings.
+- Do not move settings about the site (name, time zone, minors, backups) into environment
+  variables, and do not put facts about the deployment (database, listener, public address, proxy
+  header) into the admin UI.
 - Do not use HTML `title=` attributes for tooltips (Cameron's standing rule).
 - Do not put anything specific to one deployment (hostnames, servers, ports) in this repo; it is
   public.

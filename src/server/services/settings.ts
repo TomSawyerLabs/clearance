@@ -15,7 +15,9 @@ export async function getSettings(ctx: Ctx): Promise<Settings> {
   for (const row of rows) {
     if (row.key in DEFAULT_SETTINGS) stored[row.key] = JSON.parse(row.value);
   }
-  return { ...DEFAULT_SETTINGS, ...stored } as Settings;
+  const settings = { ...DEFAULT_SETTINGS, ...stored } as Settings;
+  // What the deployment says wins over what was recorded at setup.
+  return ctx.origin ? { ...settings, origin: ctx.origin } : settings;
 }
 
 /** One upsert per key, as queries, so callers can fold them into an atomic batch. */
@@ -50,11 +52,14 @@ export async function updateSettings(
   patch: unknown,
 ): Promise<Settings> {
   const admin = requireAdmin(caller);
-  const parsed = settingsSchema.partial().safeParse(patch);
+  // The site address is not among them: it belongs to the deployment
+  // (PUBLIC_BASE_URL), and a wrong value here would lock everyone out.
+  const parsed = settingsSchema
+    .omit({ origin: true })
+    .partial()
+    .safeParse(patch);
   if (!parsed.success)
     throw badRequest("Some settings are not valid.", parsed.error.issues);
-  if (parsed.data.origin === null)
-    throw badRequest("The site address cannot be cleared.");
 
   await ctx.store.atomic([
     ...settingQueries(ctx, parsed.data, admin.id),

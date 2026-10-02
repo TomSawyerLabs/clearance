@@ -1,5 +1,4 @@
 import {
-  Alert,
   Button,
   Group,
   Select,
@@ -15,6 +14,8 @@ import { api, type Settings } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { useLoad, useSite } from "../../site.tsx";
 
+type AdminSettings = Settings & { originFromEnvironment: boolean };
+
 /** Every zone the browser knows, plus the current value in case it is not among them. */
 function timeZones(current: string): string[] {
   const known =
@@ -24,17 +25,16 @@ function timeZones(current: string): string[] {
   return [...new Set(["UTC", current, ...known])].sort();
 }
 
-function Form({ initial }: { initial: Settings }) {
+function Form({ initial }: { initial: AdminSettings }) {
   const { refresh } = useSite();
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [values, setValues] = useState(initial);
+  const [values, setValues] = useState<Settings>(initial);
   const [saved, setSaved] = useState(false);
   const action = useAction();
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSaved(false);
     setValues((current) => ({ ...current, [key]: value }));
   };
-  const originChanged = values.origin !== initial.origin;
 
   return (
     <form
@@ -129,24 +129,18 @@ function Form({ initial }: { initial: Settings }) {
             allowDecimal={false}
             maw={260}
           />
-          <TextInput
-            label="Site address"
-            description="The address people type to get here. Passkeys are tied to its hostname."
-            value={values.origin ?? ""}
-            onChange={(event) => set("origin", event.currentTarget.value)}
-            required
-          />
-          {originChanged && (
-            <Alert
-              color="red"
-              title="Changing the site address can lock everyone out"
-            >
-              Requests are only accepted from this address, and if the hostname
-              changes every existing passkey stops working, including yours. If
-              you get it wrong, fix it from the server with{" "}
-              <code>clearance config set origin</code>.
-            </Alert>
-          )}
+          <Stack gap={2}>
+            <Text size="sm" fw={500}>
+              Site address
+            </Text>
+            <Text>{initial.origin}</Text>
+            <Text size="xs" c="dimmed">
+              {initial.originFromEnvironment
+                ? "Set by whoever runs the server, with PUBLIC_BASE_URL."
+                : "Recorded when the first administrator registered. Whoever runs the server can state it explicitly with PUBLIC_BASE_URL."}{" "}
+              Passkeys are tied to its hostname, so it is not changed here.
+            </Text>
+          </Stack>
         </Stack>
 
         <Problem message={action.error} />
@@ -162,7 +156,7 @@ function Form({ initial }: { initial: Settings }) {
 }
 
 export function SettingsPage() {
-  const settings = useLoad<Settings>("/admin/settings");
+  const settings = useLoad<AdminSettings>("/admin/settings");
   return (
     <Stack gap="lg">
       <Title order={2}>Settings</Title>
