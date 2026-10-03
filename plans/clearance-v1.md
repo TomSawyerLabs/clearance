@@ -110,24 +110,27 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
         applied back with a preview (UI and `clearance config export` / `apply`). Cameron's idea: the
         private documents repo also holds the configuration. The app does not touch git; a person
         commits the downloaded file. Creates and updates only, never deletes, never publishes text.
-12. [ ] **Current (2026-10-02), all asked for by Cameron in one message:**
-        12a. [ ] Document variables: deployment facts (legal entity, address, landlord) live in the
+12. [x] **Built 2026-10-02 (commit `dc424ab`, CI fix `36d5b94`), all asked for by Cameron in one message:**
+        12a. [x] Document variables: deployment facts (legal entity, address, landlord) live in the
         settings and the configuration file as `variables`, and documents say `{{legal_entity}}`.
         Resolved when a version is published, so the stored text and the fingerprint are the words
         people signed; `clearance hash --config FILE` resolves the same way for files on disk.
-        12b. [ ] Inline questions: `{{question:key}}` on a line of its own places that question in
+        12b. [x] Inline questions: `{{question:key}}` on a line of its own places that question in
         the text, on screen and in the PDF, instead of at the end. New question types: `initials`,
         `date`, `multichoice`, `name` (the signer types their own name).
-        12c. [ ] Certifications, first version: a document of kind `certification` is signed by a
+        12c. [x] Certifications, first version: a document of kind `certification` is signed by a
         mentor (a manager of one of the person's groups, or an administrator) in the capacity
         `attester`, with their passkey, and that grants the person the clearance. No guardian is
         involved. Nothing for machines to ask yet.
-        12d. [ ] Unix socket in the container: the image owns `/run/clearance`, so an empty shared
+        12d. [x] Unix socket in the container: the image owns `/run/clearance`, so an empty shared
         volume mounted there takes that ownership (Docker copies the image directory's owner onto
         an empty volume on first mount: `copyExistingContents` in moby's
         `daemon/container/container_unix.go`, which only checks that the volume is empty). The CI
         smoke test proves it with a pre-created volume.
 13. [ ] Per-group requirements, a Unicode font for PDFs, email, an API for machines. Not started.
+14. [ ] Certifications, later: a per-document rule for who may attest (today: any manager of one
+        of the person's groups, or an administrator); a document that both the student signs and a
+        mentor attests (today a document has one kind); expiry reminders.
 
 ## Findings / gotchas
 
@@ -143,7 +146,24 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
   text and questions. Changing this rule changes every fingerprint; do not.
 - **Two `wrangler dev` instances need different `--inspector-port`s**, or the second fails.
 - **Shell here-documents mangle backslashes in generated TypeScript.** Several patch scripts
-  written that way lost `\n`, `\d` and `\\`. Edit source files directly instead.
+  written that way lost `\n`, `\d` and `\\`. Edit source files directly instead. (Happened again
+  on 2026-10-02, twice; a Python patch script fed through a here-document is just as affected.
+  Use the editor tool for any file with a backslash in it.)
+- **`zod`'s `.partial()` fills defaults in for absent keys.** `schema.partial().parse({})` on a
+  schema with `.default()` fields returns every default, so a PATCH of one field silently reset
+  the others (archiving a group erased its code; saving a document's rules erased its
+  description). Patch schemas are written out with `.optional()` and no defaults.
+- **A socket in a shared volume needs no root.** Docker's copy-up gives an empty volume the
+  ownership of the image directory it is first mounted over (`copyExistingContents` in moby's
+  `daemon/container/container_unix.go`; it checks only that the volume is empty). The image owns
+  `/run/clearance`, so the unprivileged app creates its socket there. The CI smoke test runs this
+  exact scenario, and its first run showed the second half of the story: the default socket mode
+  admits only owner and root, so the proxy must run as root (Caddy does) or `SOCKET_MODE` must
+  open it.
+- **Windows reserves moving port ranges for Hyper-V.** The Worker test's inspector port
+  (`port + 1000` = 9797) landed in one (`netsh interface ipv4 show excludedportrange
+  protocol=tcp`), and `wrangler dev` died with "access forbidden by its access permissions". It
+  is `port + 20000` now.
 
 - **In the browser test, wait for a page's heading before filling a field.** `getByLabel("Name")`
   matched "Site name" on the page being navigated away from, on a slower machine. Required fields
@@ -224,4 +244,9 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
       the browser test downloads the configuration, previews an edited copy and applies it.
 - [ ] Not verified: macOS executables, a real Postgres server (only PGlite), a deployed Worker on
       real D1, real phones and passkey managers.
-- [ ] Certifications.
+- [x] 2026-10-02: Variables, placed questions and new question kinds, certifications, the
+      socket-owning image. `bun run test` 42 passing on both engines plus the Worker; the browser
+      test covers a variable, a placed question and a mentor certifying from the group page; CI
+      green with the image started twice, once on a port and once on a socket in a pre-created
+      volume.
+- [ ] Certifications: who may attest, per document; machine API.
