@@ -132,7 +132,8 @@ export interface DocumentVersionsTable {
   published_by: string;
 }
 
-export type SignatureCapacity = "self" | "guardian" | "minor";
+/** See `Capacity` in the shared document model; `attester` is a mentor certifying someone. */
+export type SignatureCapacity = "self" | "guardian" | "minor" | "attester";
 
 export interface SignaturesTable {
   id: string;

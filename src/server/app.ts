@@ -339,7 +339,11 @@ export function createApi({
       c.req.param("subjectId"),
     );
     return c.json({
-      clearance: { id: context.clearance.id, name: context.clearance.name },
+      clearance: {
+        id: context.clearance.id,
+        name: context.clearance.name,
+        kind: context.clearance.kind,
+      },
       version: context.version,
       subject: {
         id: context.subject.id,
@@ -350,7 +354,7 @@ export function createApi({
       capacity: context.capacity,
       blocked: context.blocked,
       status: context.status,
-      statement: signing.SIGNING_STATEMENT,
+      statement: context.statement,
     });
   });
   app.post("/sign/options", async (c) =>

@@ -193,6 +193,41 @@ test("an operator backs up, restores elsewhere, and matches a document to its fi
   writeFileSync(join(dir, "untitled.md"), "Just text.\n");
   expect((await cli("hash", join(dir, "untitled.md"))).code).toBe(2);
 
+  // A document with variables needs the configuration file they are set in,
+  // and then fingerprints as the server published it.
+  const templated = join(dir, "templated.md");
+  writeFileSync(
+    templated,
+    "# Shop release\r\n\r\nThe shop of {{org}} has **sharp tools**.\r\n\r\n{{question:contact}}\r\n",
+  );
+  const noConfig = await cli("hash", templated, fieldsFile);
+  expect(noConfig.code).toBe(2);
+  expect(noConfig.stderr).toContain("org");
+  await admin.ok("PATCH", "/admin/settings", {
+    variables: { org: "Example Robotics LLC" },
+  });
+  const config = join(dir, "clearance.config.json");
+  writeFileSync(config, (await cli("config", "export")).stdout);
+  const withConfig = await cli(
+    "hash",
+    templated,
+    fieldsFile,
+    "--config",
+    config,
+  );
+  expect(withConfig.code).toBe(0);
+  const templatedVersion = await admin.ok(
+    "POST",
+    `/clearances/${clearance.id}/versions`,
+    {
+      title: "Shop release",
+      body: "The shop of {{org}} has **sharp tools**.\n\n{{question:contact}}",
+      fields,
+    },
+  );
+  expect(templatedVersion.bodyHash).toBe(withConfig.stdout.trim());
+  expect(templatedVersion.body).toContain("Example Robotics LLC");
+
   // --- A backup, restored into a second installation ------------------------
   const file = join(dir, "moved.ndjson.gz");
   const backup = await cli("backup", file);
@@ -205,7 +240,7 @@ test("an operator backs up, restores elsewhere, and matches a document to its fi
   };
   const restored = await cliWith(elsewhere, "restore", file);
   expect(restored.code).toBe(0);
-  expect(restored.stdout).toContain('"document_versions":1');
+  expect(restored.stdout).toContain('"document_versions":2');
   expect(JSON.parse((await cliWith(elsewhere, "config")).stdout)).toMatchObject(
     {
       siteName: "Tom Sawyer Labs",

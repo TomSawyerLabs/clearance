@@ -10,7 +10,7 @@ import {
 import type { Settings } from "../../shared/settings.ts";
 import { badRequest, type Caller, type Ctx, requireAdmin } from "../context.ts";
 import type { ClearancesTable, GroupsTable } from "../db/schema.ts";
-import { newId } from "../lib/util.ts";
+import { canonicalJson, newId } from "../lib/util.ts";
 import { audit } from "./audit.ts";
 import { getSettings, settingQueries } from "./settings.ts";
 
@@ -47,6 +47,7 @@ function describe(state: DocumentState): ConfigDocument {
   return {
     name: state.row.name,
     description: state.row.description,
+    kind: state.row.kind,
     requiredForAll: state.row.required_for_all === 1,
     validityDays: state.row.validity_days,
     minorPolicy: state.row.minor_policy,
@@ -114,7 +115,9 @@ async function diff(ctx: Ctx, config: SiteConfig) {
   const settings = await getSettings(ctx);
   for (const [key, to] of Object.entries(config.settings)) {
     const from = settings[key as keyof Settings];
-    if (from !== to) changes.push({ kind: "setting", key, from, to });
+    // Compared as canonical JSON: `variables` is an object.
+    if (canonicalJson(from) !== canonicalJson(to))
+      changes.push({ kind: "setting", key, from, to });
   }
 
   const existing = await documents(ctx);
@@ -124,6 +127,14 @@ async function diff(ctx: Ctx, config: SiteConfig) {
       changes.push({ kind: "document.create", name: wanted.name });
     } else {
       const have = describe(state);
+      if (have.kind !== wanted.kind) {
+        changes.push({
+          kind: "document.kind",
+          name: wanted.name,
+          have: have.kind,
+          wanted: wanted.kind,
+        });
+      }
       for (const field of RULES) {
         if (have[field] !== wanted[field]) {
           changes.push({
@@ -236,7 +247,7 @@ async function applyParsed(
         ctx.db.insertInto("clearances").values({
           id: newId(),
           name: wanted.name,
-          kind: "release",
+          kind: wanted.kind,
           created_at: now,
           archived_at: wanted.archived ? now : null,
           ...values,

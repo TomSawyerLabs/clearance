@@ -71,6 +71,7 @@ const WHO = {
   self: "the person",
   guardian: "a parent or guardian",
   minor: "the student",
+  attester: "a mentor",
 } as const;
 
 /** One line saying where a clearance stands and, if stuck, on whom. */
@@ -80,9 +81,15 @@ export function describeStatus(status: ClearanceStatus): {
   detail: string | null;
 } {
   const waiting = status.waitingOn.map((who) => WHO[who]).join(" and ");
+  const certification = status.kind === "certification";
+  const verb = certification ? "certify" : "sign";
   switch (status.state) {
     case "active":
-      return { color: "green", label: "Current", detail: null };
+      return {
+        color: "green",
+        label: certification ? "Certified" : "Current",
+        detail: null,
+      };
     case "pending":
       return {
         color: "yellow",
@@ -93,22 +100,28 @@ export function describeStatus(status: ClearanceStatus): {
       return {
         color: "orange",
         label: "Expired",
-        detail: `Needs signing again by ${waiting}.`,
+        detail: `Needs ${waiting} to ${verb} again.`,
       };
     case "stale":
       return {
         color: "orange",
-        label: "Needs signing again",
+        label: certification ? "Needs certifying again" : "Needs signing again",
         detail: status.reason,
       };
     default:
       return status.required
         ? {
             color: "red",
-            label: "Not signed",
-            detail: `Needs ${waiting} to sign.`,
+            label: certification ? "Not certified" : "Not signed",
+            detail: `Needs ${waiting} to ${verb}.`,
           }
-        : { color: "gray", label: "Not signed", detail: "Optional." };
+        : {
+            color: "gray",
+            label: certification ? "Not certified" : "Not signed",
+            detail: certification
+              ? `Needs ${waiting} to ${verb}.`
+              : "Optional.",
+          };
   }
 }
 

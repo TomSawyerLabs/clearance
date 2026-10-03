@@ -33,9 +33,11 @@ async function startWorker(port: number): Promise<Worker> {
       "dev",
       "--port",
       String(port),
-      // Each instance needs its own debugger port, or the second fails to start.
+      // Each instance needs its own debugger port, or the second fails to
+      // start. Well away from the port itself: on Windows, Hyper-V reserves
+      // moving ranges around 9700-11400, and port + 1000 landed in one.
       "--inspector-port",
-      String(port + 1000),
+      String(port + 20000),
       "--persist-to",
       state,
       "--log-level",

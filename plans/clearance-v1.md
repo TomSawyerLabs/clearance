@@ -110,8 +110,24 @@ Chosen by Claude to satisfy the above (open to change, each is isolated):
         applied back with a preview (UI and `clearance config export` / `apply`). Cameron's idea: the
         private documents repo also holds the configuration. The app does not touch git; a person
         commits the downloaded file. Creates and updates only, never deletes, never publishes text.
-12. [ ] **Next:** certifications (mentor attestation, itself a passkey sign-off). Not started.
-13. [ ] Per-group requirements, a Unicode font for PDFs, email. Not started.
+12. [ ] **Current (2026-10-02), all asked for by Cameron in one message:**
+        12a. [ ] Document variables: deployment facts (legal entity, address, landlord) live in the
+        settings and the configuration file as `variables`, and documents say `{{legal_entity}}`.
+        Resolved when a version is published, so the stored text and the fingerprint are the words
+        people signed; `clearance hash --config FILE` resolves the same way for files on disk.
+        12b. [ ] Inline questions: `{{question:key}}` on a line of its own places that question in
+        the text, on screen and in the PDF, instead of at the end. New question types: `initials`,
+        `date`, `multichoice`, `name` (the signer types their own name).
+        12c. [ ] Certifications, first version: a document of kind `certification` is signed by a
+        mentor (a manager of one of the person's groups, or an administrator) in the capacity
+        `attester`, with their passkey, and that grants the person the clearance. No guardian is
+        involved. Nothing for machines to ask yet.
+        12d. [ ] Unix socket in the container: the image owns `/run/clearance`, so an empty shared
+        volume mounted there takes that ownership (Docker copies the image directory's owner onto
+        an empty volume on first mount: `copyExistingContents` in moby's
+        `daemon/container/container_unix.go`, which only checks that the volume is empty). The CI
+        smoke test proves it with a pre-created volume.
+13. [ ] Per-group requirements, a Unicode font for PDFs, email, an API for machines. Not started.
 
 ## Findings / gotchas
 

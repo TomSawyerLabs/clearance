@@ -4,93 +4,34 @@ import {
   Checkbox,
   Divider,
   Paper,
-  Radio,
   Stack,
   Text,
-  Textarea,
-  TextInput,
   Title,
 } from "@mantine/core";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ApiError, messageOf, signDocument, type SigningPage } from "../api.ts";
 import { Loaded, Problem } from "../components/common.tsx";
 import { DocumentView } from "../components/DocumentView.tsx";
-import { type Answers, type Field, fieldsFor } from "../../shared/document.ts";
+import { FieldInput } from "../components/FieldInput.tsx";
+import {
+  type Answers,
+  fieldsFor,
+  parseDocument,
+  placedQuestions,
+} from "../../shared/document.ts";
 import { useLoad } from "../site.tsx";
-
-function FieldInput({
-  field,
-  value,
-  problem,
-  onChange,
-}: {
-  field: Field;
-  value: string | boolean | undefined;
-  problem: string | undefined;
-  onChange(value: string | boolean): void;
-}) {
-  switch (field.type) {
-    case "acknowledge":
-    case "checkbox":
-      return (
-        <Checkbox
-          label={field.label}
-          description={field.help}
-          error={problem}
-          checked={value === true}
-          onChange={(event) => onChange(event.currentTarget.checked)}
-          required={field.type === "acknowledge"}
-        />
-      );
-    case "choice":
-      return (
-        <Radio.Group
-          label={field.label}
-          description={field.help}
-          error={problem}
-          value={typeof value === "string" ? value : ""}
-          onChange={onChange}
-          required={field.required}
-        >
-          <Stack gap="xs" mt="xs">
-            {field.options?.map((option) => (
-              <Radio key={option} value={option} label={option} />
-            ))}
-          </Stack>
-        </Radio.Group>
-      );
-    case "longtext":
-      return (
-        <Textarea
-          label={field.label}
-          description={field.help}
-          error={problem}
-          value={typeof value === "string" ? value : ""}
-          onChange={(event) => onChange(event.currentTarget.value)}
-          required={field.required}
-          autosize
-          minRows={2}
-        />
-      );
-    default:
-      return (
-        <TextInput
-          label={field.label}
-          description={field.help}
-          error={problem}
-          value={typeof value === "string" ? value : ""}
-          onChange={(event) => onChange(event.currentTarget.value)}
-          required={field.required}
-        />
-      );
-  }
-}
 
 function SignForm({ page }: { page: SigningPage }) {
   const navigate = useNavigate();
   const capacity = page.capacity!;
   const fields = fieldsFor(page.version.fields, capacity);
+  // Questions placed in the text are asked there; the rest follow it.
+  const placed = useMemo(
+    () => new Set(placedQuestions(parseDocument(page.version.body))),
+    [page.version.body],
+  );
+  const trailing = fields.filter((field) => !placed.has(field.key));
   const [answers, setAnswers] = useState<Answers>({});
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -98,11 +39,13 @@ function SignForm({ page }: { page: SigningPage }) {
   const [problems, setProblems] = useState<Record<string, string>>({});
 
   const role =
-    capacity === "guardian"
-      ? `You are signing as ${page.signer.name}, parent or legal guardian of ${page.subject.name}.`
-      : capacity === "minor"
-        ? `You are signing as ${page.signer.name}. A parent or guardian signs this as well.`
-        : `You are signing as ${page.signer.name}.`;
+    capacity === "attester"
+      ? `You are certifying ${page.subject.name}, as ${page.signer.name}, their mentor.`
+      : capacity === "guardian"
+        ? `You are signing as ${page.signer.name}, parent or legal guardian of ${page.subject.name}.`
+        : capacity === "minor"
+          ? `You are signing as ${page.signer.name}. A parent or guardian signs this as well.`
+          : `You are signing as ${page.signer.name}.`;
 
   async function submit() {
     setBusy(true);
@@ -132,6 +75,22 @@ function SignForm({ page }: { page: SigningPage }) {
     }
   }
 
+  const input = (key: string) => {
+    const field = fields.find((candidate) => candidate.key === key);
+    // Placed, but not for this signer (another audience): nothing to show.
+    if (!field) return null;
+    return (
+      <FieldInput
+        field={field}
+        value={answers[field.key]}
+        problem={problems[field.key]}
+        onChange={(value) =>
+          setAnswers((current) => ({ ...current, [field.key]: value }))
+        }
+      />
+    );
+  };
+
   return (
     <form
       onSubmit={(event) => {
@@ -140,10 +99,13 @@ function SignForm({ page }: { page: SigningPage }) {
       }}
     >
       <Stack>
-        {fields.length > 0 && (
+        <Paper withBorder p="md">
+          <DocumentView markdown={page.version.body} question={input} />
+        </Paper>
+        {trailing.length > 0 && (
           <>
             <Divider label="Your answers" />
-            {fields.map((field) => (
+            {trailing.map((field) => (
               <FieldInput
                 key={field.key}
                 field={field}
@@ -165,7 +127,9 @@ function SignForm({ page }: { page: SigningPage }) {
         />
         <Problem message={error} />
         <Button type="submit" size="md" loading={busy} disabled={!agreed}>
-          Sign with my passkey
+          {capacity === "attester"
+            ? "Certify with my passkey"
+            : "Sign with my passkey"}
         </Button>
         <Text size="sm" c="dimmed">
           Your device will ask for your fingerprint, face or PIN. That approval
@@ -193,13 +157,16 @@ export function SignPage() {
                 : ""}
             </Text>
           </Stack>
-          <Paper withBorder p="md">
-            <DocumentView markdown={data.version.body} />
-          </Paper>
           {data.capacity ? (
             <SignForm page={data} />
           ) : (
             <Stack>
+              <Paper withBorder p="md">
+                <DocumentView
+                  markdown={data.version.body}
+                  fields={data.version.fields}
+                />
+              </Paper>
               <Alert color="yellow" title="You cannot sign this right now">
                 {data.blocked}
               </Alert>

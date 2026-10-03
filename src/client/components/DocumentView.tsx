@@ -7,15 +7,18 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { Fragment, useMemo } from "react";
+import { Fragment, type ReactNode, useMemo } from "react";
 import {
   type Block,
+  type Field,
   type Inline,
   parseDocument,
 } from "../../shared/document.ts";
 
 // Renders the same block model the server lays out as a PDF, so what is read
-// on screen is what ends up in the signed record.
+// on screen is what ends up in the signed record. A question placed in the
+// text is rendered by whoever shows the document: an input on the signing
+// page, the answer on a record, a placeholder in the editor's preview.
 
 function Inlines({ inlines }: { inlines: Inline[] }) {
   return (
@@ -39,7 +42,15 @@ function Inlines({ inlines }: { inlines: Inline[] }) {
   );
 }
 
-function Blocks({ blocks }: { blocks: Block[] }) {
+type QuestionRenderer = (key: string) => ReactNode;
+
+function Blocks({
+  blocks,
+  question,
+}: {
+  blocks: Block[];
+  question: QuestionRenderer;
+}) {
   return (
     <>
       {blocks.map((block, index) => {
@@ -73,7 +84,7 @@ function Blocks({ blocks }: { blocks: Block[] }) {
               >
                 {block.items.map((item, itemIndex) => (
                   <List.Item key={itemIndex}>
-                    <Blocks blocks={item} />
+                    <Blocks blocks={item} question={question} />
                   </List.Item>
                 ))}
               </List>
@@ -81,18 +92,59 @@ function Blocks({ blocks }: { blocks: Block[] }) {
           case "quote":
             return (
               <Blockquote key={index} my="sm" p="sm">
-                <Blocks blocks={block.blocks} />
+                <Blocks blocks={block.blocks} question={question} />
               </Blockquote>
             );
           case "rule":
             return <Divider key={index} my="md" />;
+          case "question":
+            return (
+              <div key={index} className="placed-question">
+                {question(block.key)}
+              </div>
+            );
         }
       })}
     </>
   );
 }
 
-export function DocumentView({ markdown }: { markdown: string }) {
+/** What a placed question looks like when nobody is answering it: its wording, marked. */
+export function QuestionPlaceholder({
+  field,
+  fieldKey,
+}: {
+  field: Field | undefined;
+  fieldKey: string;
+}) {
+  return (
+    <Text mb="sm" c={field ? "blue" : "red"} fs="italic">
+      {field
+        ? `[${field.label}]`
+        : `[There is no question with key "${fieldKey}"]`}
+    </Text>
+  );
+}
+
+export function DocumentView({
+  markdown,
+  fields = [],
+  question,
+}: {
+  markdown: string;
+  /** The document's questions, for showing a placed one by its wording. */
+  fields?: Field[];
+  /** How to render a question placed in the text. Default: its wording. */
+  question?: QuestionRenderer;
+}) {
   const blocks = useMemo(() => parseDocument(markdown), [markdown]);
-  return <Blocks blocks={blocks} />;
+  const render: QuestionRenderer =
+    question ??
+    ((key) => (
+      <QuestionPlaceholder
+        field={fields.find((field) => field.key === key)}
+        fieldKey={key}
+      />
+    ));
+  return <Blocks blocks={blocks} question={render} />;
 }

@@ -12,6 +12,7 @@ import {
 import { useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import type { SignedRecordView } from "../api.ts";
+import { answerText } from "../../shared/document.ts";
 import { Loaded } from "../components/common.tsx";
 import { useFormat, useLoad } from "../site.tsx";
 
@@ -60,7 +61,12 @@ export function RecordPage() {
                   Signed by <strong>{data.record.signer.name}</strong>,{" "}
                   {data.capacityPhrase}.
                 </Text>
-                <Text>Participant: {data.record.subject.name}</Text>
+                <Text>
+                  {data.record.capacity === "attester"
+                    ? "Certified"
+                    : "Participant"}
+                  : {data.record.subject.name}
+                </Text>
                 <Text>Signed: {format.dateTime(data.signedAt)}</Text>
               </Stack>
             </Paper>
@@ -70,13 +76,7 @@ export function RecordPage() {
                   {answers.map(([label, value]) => (
                     <Table.Tr key={label}>
                       <Table.Td>{label}</Table.Td>
-                      <Table.Td>
-                        {typeof value === "boolean"
-                          ? value
-                            ? "Yes"
-                            : "No"
-                          : value || "(left blank)"}
-                      </Table.Td>
+                      <Table.Td>{answerText(value)}</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

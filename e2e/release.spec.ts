@@ -62,6 +62,10 @@ test("an admin sets up a release and a parent signs it for their child", async (
   await expect(
     admin.getByLabel("A parent or guardian signs for them"),
   ).toBeChecked();
+  // A variable the documents will refer to.
+  await admin.getByRole("button", { name: "Add a variable" }).click();
+  await admin.getByLabel("Variable name").fill("legal_entity");
+  await admin.getByLabel("Variable value").fill("Example Robotics LLC");
   await admin.getByRole("button", { name: "Save settings" }).click();
   await expect(admin.getByText("Saved.")).toBeVisible();
   await expect(
@@ -82,6 +86,7 @@ test("an admin sets up a release and a parent signs it for their child", async (
   expect(siteConfig.settings).toMatchObject({
     siteName: "Tom Sawyer Labs",
     minorsEnabled: true,
+    variables: { legal_entity: "Example Robotics LLC" },
   });
   const configInput = admin.locator('input[type="file"]');
   await configInput.setInputFiles({
@@ -131,7 +136,7 @@ test("an admin sets up a release and a parent signs it for their child", async (
   await admin
     .getByLabel("Document text")
     .fill(
-      "# Risks\n\nThe shop has **sharp tools**.\n\n1. Wear safety glasses.\n2. Ask when unsure.\n",
+      "# Risks\n\nThe shop of {{legal_entity}} has **sharp tools**.\n\n1. Wear safety glasses.\n2. Ask when unsure.\n",
     );
   await admin.getByRole("button", { name: "Add a question" }).click();
   await admin
@@ -153,7 +158,10 @@ test("an admin sets up a release and a parent signs it for their child", async (
     .or(admin.getByText("Preview", { exact: true }))
     .first()
     .click();
-  await expect(admin.getByText("sharp tools")).toBeVisible();
+  // The preview shows the variable filled in, as the published text will be.
+  await expect(
+    admin.getByText("The shop of Example Robotics LLC has"),
+  ).toBeVisible();
   await admin.getByRole("button", { name: "Publish version 1" }).click();
   await expect(
     admin.getByText("published", { exact: false }).first(),
@@ -163,8 +171,9 @@ test("an admin sets up a release and a parent signs it for their child", async (
   ).toBeVisible();
 
   // --- The same document kept as files: loaded, published, downloaded --------
+  // The contact question is placed in the text, before the last line.
   const markdown =
-    "# Shop release\r\n\r\n## Risks\r\n\r\nThe shop has **hot irons**.\r\n";
+    "# Shop release\r\n\r\n## Risks\r\n\r\nThe shop has **hot irons**.\r\n\r\n{{question:contact}}\r\n\r\nAsk when unsure.\r\n";
   const questions = [
     {
       key: "contact",
@@ -186,7 +195,7 @@ test("an admin sets up a release and a parent signs it for their child", async (
     },
   ]);
   await expect(admin.getByLabel("Document text")).toHaveValue(
-    "## Risks\n\nThe shop has **hot irons**.",
+    "## Risks\n\nThe shop has **hot irons**.\n\n{{question:contact}}\n\nAsk when unsure.",
   );
   await expect(admin.getByLabel(/^Title/)).toHaveValue("Shop release");
   // The fingerprint, worked out here by hand: SHA-256 of the canonical JSON
@@ -195,7 +204,7 @@ test("an admin sets up a release and a parent signs it for their child", async (
   // for it to arrive at this value instead of reading it once.
   const draft = createHash("sha256")
     .update(
-      `{"body":${JSON.stringify("## Risks\n\nThe shop has **hot irons**.")},` +
+      `{"body":${JSON.stringify("## Risks\n\nThe shop has **hot irons**.\n\n{{question:contact}}\n\nAsk when unsure.")},` +
         `"fields":[{"key":"contact","label":"Emergency contact name and phone","required":true,"type":"text"}],` +
         `"title":"Shop release"}`,
     )
@@ -274,9 +283,14 @@ test("an admin sets up a release and a parent signs it for their child", async (
   await expect(
     parent.getByText("parent or legal guardian of Kit Kid"),
   ).toBeVisible();
-  await parent
-    .getByLabel("Emergency contact name and phone")
-    .fill("Pat 555-0100");
+  // The placed question is asked where the text put it: inside the document
+  // box, between the two paragraphs, not after the text.
+  const placed = parent
+    .locator(".placed-question")
+    .getByLabel("Emergency contact name and phone");
+  await expect(placed).toBeVisible();
+  await expect(parent.getByText("Your answers")).toHaveCount(0);
+  await placed.fill("Pat 555-0100");
   await parent.getByLabel(/I have read this document in full/).check();
   await parent.getByRole("button", { name: "Sign with my passkey" }).click();
 
@@ -294,6 +308,53 @@ test("an admin sets up a release and a parent signs it for their child", async (
   const row = admin.getByRole("row", { name: /Kit Kid/ });
   await expect(row.getByText("Current")).toBeVisible();
   await expect(row.getByText("Guardian: Pat Parent")).toBeVisible();
+
+  // --- A certification: the mentor's word, signed with the mentor's passkey --
+  await admin.getByRole("link", { name: "Documents" }).click();
+  await expect(
+    admin.getByRole("heading", { name: "New document" }),
+  ).toBeVisible();
+  await admin.getByLabel(/^Name/).fill("Bandsaw");
+  await admin
+    .getByLabel(
+      "A mentor, attesting that the person is trained: a certification",
+    )
+    .check();
+  await admin
+    .getByRole("button", { name: "Create, then write the text" })
+    .click();
+  await expect(
+    admin.getByRole("heading", { name: "Write the text" }),
+  ).toBeVisible();
+  await admin.getByLabel(/^Title/).fill("Bandsaw certification");
+  await admin
+    .getByLabel("Document text")
+    .fill("The person has shown me they can use the bandsaw safely.");
+  await admin.getByRole("button", { name: "Publish version 1" }).click();
+  await expect(
+    admin.getByRole("heading", { name: "Edit the text" }),
+  ).toBeVisible();
+  await admin.getByRole("link", { name: "Groups" }).click();
+  await admin.getByRole("link", { name: "Robo Rafters" }).click();
+  const kidRow = admin.getByRole("row", { name: /Kit Kid/ });
+  await expect(kidRow.getByText("Not certified")).toBeVisible();
+  await kidRow.getByRole("link", { name: "Certify" }).click();
+  await expect(
+    admin.getByRole("heading", { name: "Bandsaw certification" }),
+  ).toBeVisible();
+  await expect(admin.getByText("You are certifying Kit Kid")).toBeVisible();
+  await admin.getByLabel(/I certify that I have personally seen/).check();
+  await admin.getByRole("button", { name: "Certify with my passkey" }).click();
+  await expect(admin.getByText("That is everything.")).toBeVisible();
+  await expect(admin.getByText("Certified: Kit Kid")).toBeVisible();
+  await admin.getByRole("link", { name: "Groups" }).click();
+  await admin.getByRole("link", { name: "Robo Rafters" }).click();
+  await expect(
+    admin.getByRole("row", { name: /Kit Kid/ }).getByText("Certified"),
+  ).toBeVisible();
+  // The parent sees it on the child's card, with nothing to sign.
+  await parent.goto("/");
+  await expect(parent.getByText("Certified", { exact: true })).toBeVisible();
 
   // --- Backups: downloaded here, restored into an empty second installation ---
   await admin.getByRole("link", { name: "Backups" }).click();

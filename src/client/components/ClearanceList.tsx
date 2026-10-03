@@ -42,7 +42,8 @@ export function ClearanceList({
                 {detail && <Text size="sm">{detail}</Text>}
                 {status.state === "active" && status.grantedAt && (
                   <Text size="sm" c="dimmed">
-                    Signed {format.date(status.grantedAt)}
+                    {status.kind === "certification" ? "Certified" : "Signed"}{" "}
+                    {format.date(status.grantedAt)}
                     {status.expiresAt
                       ? `, valid until ${format.date(status.expiresAt)}`
                       : ""}
@@ -72,7 +73,9 @@ export function ClearanceList({
                   }
                   style={{ flexShrink: 0 }}
                 >
-                  Read and sign
+                  {status.kind === "certification"
+                    ? "Certify"
+                    : "Read and sign"}
                 </Button>
               )}
             </Group>

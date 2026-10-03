@@ -10,7 +10,7 @@ import type * as familyService from "../server/services/family.ts";
 import type * as groupService from "../server/services/groups.ts";
 import type { PersonSummary } from "../server/services/people.ts";
 import type * as signingService from "../server/services/signing.ts";
-import type { Capacity } from "../shared/document.ts";
+import type { Answers, Capacity } from "../shared/document.ts";
 import type { Settings } from "../shared/settings.ts";
 
 // The response types are taken straight from the server's service functions
@@ -55,7 +55,7 @@ export interface SiteState {
 }
 
 export interface SigningPage {
-  clearance: { id: string; name: string };
+  clearance: { id: string; name: string; kind: "release" | "certification" };
   version: clearanceService.VersionDto;
   subject: { id: string; name: string; minor: boolean };
   signer: { id: string; name: string };
@@ -182,7 +182,7 @@ export async function signIn(): Promise<{ userId: string }> {
 export async function signDocument(
   clearanceId: string,
   subjectId: string,
-  answers: Record<string, string | boolean>,
+  answers: Answers,
 ) {
   const started = await post<Result<typeof signingService.signOptions>>(
     "/sign/options",

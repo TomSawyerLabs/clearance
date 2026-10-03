@@ -17,16 +17,28 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { type Field, fieldsSchema } from "../../../shared/document.ts";
+import {
+  checkMarkers,
+  type Field,
+  fieldsSchema,
+  type Variables,
+} from "../../../shared/document.ts";
 import {
   documentFingerprint,
   fromMarkdownFile,
+  resolveDocument,
   toFieldsFile,
   toMarkdownFile,
 } from "../../../shared/documentFile.ts";
-import { api, type ClearanceDto, post, type VersionDto } from "../../api.ts";
+import {
+  api,
+  type ClearanceDto,
+  post,
+  type Settings,
+  type VersionDto,
+} from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { DocumentView } from "../../components/DocumentView.tsx";
 import { useFormat, useLoad, useSite } from "../../site.tsx";
@@ -35,8 +47,21 @@ const FIELD_TYPES: { value: Field["type"]; label: string }[] = [
   { value: "text", label: "Short answer" },
   { value: "longtext", label: "Long answer" },
   { value: "choice", label: "Pick one option" },
+  { value: "multichoice", label: "Tick any of the options" },
   { value: "checkbox", label: "Optional tick box" },
   { value: "acknowledge", label: "Tick box that must be ticked" },
+  { value: "initials", label: "Initials" },
+  { value: "date", label: "A date" },
+  { value: "name", label: "The signer types their name" },
+];
+
+/** Kinds where "required" is a choice; the others are always required or always optional. */
+const OPTIONAL_KINDS: Field["type"][] = [
+  "text",
+  "longtext",
+  "choice",
+  "multichoice",
+  "date",
 ];
 
 function keyFrom(label: string, taken: string[]): string {
@@ -74,7 +99,9 @@ function FieldsEditor({
         <Title order={4}>Questions</Title>
         <Text size="sm" c="dimmed">
           Asked on the signing page and printed, with the answers, on the signed
-          record.
+          record. They follow the text, unless the text places one with{" "}
+          <Code>{"{{question:key}}"}</Code> on a line of its own, for instance
+          initials beside a clause.
         </Text>
       </Stack>
       {fields.map((field, index) => (
@@ -82,6 +109,15 @@ function FieldsEditor({
           <Stack gap="xs">
             <TextInput
               label="Question or statement"
+              description={
+                field.key ? (
+                  <>
+                    Key <Code>{field.key}</Code>
+                  </>
+                ) : (
+                  "The key, for placing it in the text, is made from this wording."
+                )
+              }
               value={field.label}
               onChange={(event) =>
                 update(index, { label: event.currentTarget.value })
@@ -114,7 +150,7 @@ function FieldsEditor({
                   }
                 />
               )}
-              {["text", "longtext", "choice"].includes(field.type) && (
+              {OPTIONAL_KINDS.includes(field.type) && (
                 <Checkbox
                   label="Must be answered"
                   checked={field.required ?? false}
@@ -125,7 +161,7 @@ function FieldsEditor({
                 />
               )}
             </Group>
-            {field.type === "choice" && (
+            {(field.type === "choice" || field.type === "multichoice") && (
               <Textarea
                 label="Options, one per line"
                 value={(field.options ?? []).join("\n")}
@@ -236,7 +272,7 @@ function tidy(fields: Field[]): Field[] {
       key,
       label: field.label.trim(),
       options:
-        field.type === "choice"
+        field.type === "choice" || field.type === "multichoice"
           ? (field.options ?? []).map((option) => option.trim()).filter(Boolean)
           : undefined,
     };
@@ -246,10 +282,13 @@ function tidy(fields: Field[]): Field[] {
 function Editor({
   clearance,
   current,
+  variables,
   onPublished,
 }: {
   clearance: ClearanceDto;
   current: VersionDto | undefined;
+  /** The site's variables, which `{{name}}` in the text stands for. */
+  variables: Variables;
   onPublished(): Promise<void>;
 }) {
   const [title, setTitle] = useState(current?.title ?? clearance.name);
@@ -261,11 +300,22 @@ function Editor({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
 
+  // What publishing would store: the variables filled in. The preview shows
+  // it, and the fingerprint is taken over it, as the server's will be.
+  const resolved = useMemo(
+    () => resolveDocument({ title, body, fields: tidy(fields) }, variables),
+    [title, body, fields, variables],
+  );
+  const markerProblems = useMemo(
+    () => checkMarkers(resolved.content.body, resolved.content.fields),
+    [resolved],
+  );
+
   // The same fingerprint the server will record on publishing, and the one
   // `clearance hash` prints for the files, so a draft can be checked first.
   useEffect(() => {
     let live = true;
-    documentFingerprint({ title, body, fields: tidy(fields) }).then(
+    documentFingerprint(resolved.content).then(
       (value) => live && setFingerprint(value),
       // Not fingerprintable yet, e.g. a question with no wording.
       () => live && setFingerprint(null),
@@ -273,8 +323,9 @@ function Editor({
     return () => {
       live = false;
     };
-  }, [title, body, fields]);
+  }, [resolved]);
   const unchanged = current !== undefined && fingerprint === current.bodyHash;
+  const blocked = resolved.missing.length > 0 || markerProblems.length > 0;
 
   /** Takes the text from a `.md` file and the questions from a `.json` file. */
   async function load(files: File[]) {
@@ -327,9 +378,10 @@ function Editor({
         required
       />
       <Group justify="space-between" align="flex-end">
-        <Text size="sm" c="dimmed">
+        <Text size="sm" c="dimmed" style={{ flex: 1, minWidth: 220 }}>
           Written in Markdown: # for headings, **bold**, *italic*, numbered and
-          bulleted lists.
+          bulleted lists. <Code>{"{{legal_entity}}"}</Code> is filled in from
+          the variables in Settings when a version is published.
         </Text>
         <SegmentedControl
           size="xs"
@@ -359,11 +411,32 @@ function Editor({
       ) : (
         <Paper withBorder p="md">
           {body.trim() ? (
-            <DocumentView markdown={body} />
+            <DocumentView
+              markdown={resolved.content.body}
+              fields={resolved.content.fields}
+            />
           ) : (
             <Text c="dimmed">Nothing written yet.</Text>
           )}
         </Paper>
+      )}
+      {resolved.missing.length > 0 && (
+        <Alert color="yellow" title="Variables without a value">
+          The text uses{" "}
+          {resolved.missing.map((name, index) => (
+            <Fragment key={name}>
+              {index > 0 && ", "}
+              <Code>{`{{${name}}}`}</Code>
+            </Fragment>
+          ))}
+          . Set {resolved.missing.length === 1 ? "it" : "them"} in Settings
+          before publishing.
+        </Alert>
+      )}
+      {markerProblems.length > 0 && (
+        <Alert color="yellow" title="Placed questions">
+          {markerProblems.join(" ")}
+        </Alert>
       )}
 
       <FieldsEditor fields={fields} onChange={setFields} />
@@ -384,7 +457,7 @@ function Editor({
       <Group>
         <Button
           loading={action.busy}
-          disabled={!title.trim() || !body.trim() || unchanged}
+          disabled={!title.trim() || !body.trim() || unchanged || blocked}
           onClick={() =>
             action.run(async () => {
               await post(`/clearances/${clearance.id}/versions`, {
@@ -536,7 +609,7 @@ function Options({
           allowDecimal={false}
           maw={260}
         />
-        {state.site.guardiansEnabled && (
+        {state.site.guardiansEnabled && clearance.kind === "release" && (
           <NativeSelect
             label="For someone under age, who signs?"
             data={[
@@ -588,14 +661,15 @@ export function ClearancePage() {
   const format = useFormat();
   const clearances = useLoad<ClearanceDto[]>("/clearances");
   const versions = useLoad<VersionDto[]>(`/clearances/${id}/versions`);
+  const settings = useLoad<Settings>("/admin/settings");
   const reload = async () => {
     await Promise.all([clearances.reload(), versions.reload()]);
   };
 
   return (
     <Loaded
-      data={clearances.data && versions.data}
-      error={clearances.error ?? versions.error}
+      data={clearances.data && versions.data && settings.data}
+      error={clearances.error ?? versions.error ?? settings.error}
     >
       {() => {
         const clearance = clearances.data!.find((entry) => entry.id === id);
@@ -606,13 +680,24 @@ export function ClearancePage() {
           <Stack gap="xl">
             <Group gap="xs">
               <Title order={2}>{clearance.name}</Title>
+              {clearance.kind === "certification" && (
+                <Badge color="grape">Certification</Badge>
+              )}
               {clearance.archived && <Badge color="gray">Archived</Badge>}
             </Group>
+            {clearance.kind === "certification" && (
+              <Text size="sm" c="dimmed">
+                A mentor signs this document to certify a person: a manager of
+                one of their groups, or an administrator. Write it as what the
+                mentor is attesting to, and ask the mentor the questions.
+              </Text>
+            )}
             {/* Remount on publish so the editor starts from the new current version. */}
             <Editor
               key={history[0]?.id ?? "new"}
               clearance={clearance}
               current={history[0]}
+              variables={settings.data!.variables}
               onPublished={reload}
             />
             <Options
@@ -625,8 +710,13 @@ export function ClearancePage() {
                 <Title order={4}>Published versions</Title>
                 <Text size="sm" c="dimmed">
                   To check that files in version control are what was published,
-                  run <Code>clearance hash FILE.md FIELDS.json</Code> on them
-                  and compare the fingerprint.
+                  run{" "}
+                  <Code>
+                    clearance hash FILE.md FIELDS.json --config
+                    clearance.config.json
+                  </Code>{" "}
+                  on them and compare the fingerprint. The downloads below are
+                  the text as published, with the variables filled in.
                 </Text>
                 {history.map((version) => (
                   <PublishedVersion

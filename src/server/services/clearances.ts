@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   type Capacity,
+  checkMarkers,
   type Field,
   fieldsSchema,
 } from "../../shared/document.ts";
@@ -22,10 +23,12 @@ import type {
 import {
   documentFingerprint,
   normalizeDocument,
+  resolveDocument,
 } from "../../shared/documentFile.ts";
 import { newId } from "../lib/util.ts";
 import { audit } from "./audit.ts";
 import { isWard, requireOversight } from "./people.ts";
+import { getSettings } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
 // Definitions
@@ -33,10 +36,31 @@ import { isWard, requireOversight } from "./people.ts";
 export const clearanceInput = z.object({
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(1000).default(""),
+  /**
+   * A release is signed by the person, or their guardian. A certification is
+   * signed by a mentor, attesting that the person is trained. Chosen when the
+   * document is created and fixed after that: records have been signed in
+   * one capacity or the other.
+   */
+  kind: z.enum(["release", "certification"]).default("release"),
   requiredForAll: z.boolean().default(false),
   /** Null: valid until revoked or superseded. */
   validityDays: z.number().int().min(1).max(3650).nullable().default(null),
   minorPolicy: z.enum(["guardian", "guardian_and_minor"]).default("guardian"),
+});
+
+/**
+ * Written out rather than derived with `.partial()`: a partial of a schema
+ * with defaults fills the defaults in for every absent key, so a patch of one
+ * field would silently reset the others. The kind is not here; it is fixed.
+ */
+export const clearancePatch = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  description: z.string().trim().max(1000).optional(),
+  requiredForAll: z.boolean().optional(),
+  validityDays: z.number().int().min(1).max(3650).nullable().optional(),
+  minorPolicy: z.enum(["guardian", "guardian_and_minor"]).optional(),
+  archived: z.boolean().optional(),
 });
 
 export interface ClearanceDto {
@@ -134,7 +158,7 @@ export async function createClearance(ctx: Ctx, caller: Caller, raw: unknown) {
     id: newId(),
     name: parsed.data.name,
     description: parsed.data.description,
-    kind: "release",
+    kind: parsed.data.kind,
     required_for_all: parsed.data.requiredForAll ? 1 : 0,
     validity_days: parsed.data.validityDays,
     minor_policy: parsed.data.minorPolicy,
@@ -157,10 +181,7 @@ export async function updateClearance(
   raw: unknown,
 ) {
   requireAdmin(caller);
-  const parsed = clearanceInput
-    .partial()
-    .extend({ archived: z.boolean().optional() })
-    .safeParse(raw);
+  const parsed = clearancePatch.safeParse(raw);
   if (!parsed.success)
     throw badRequest("Check the details and try again.", parsed.error.issues);
   const patch = parsed.data;
@@ -258,8 +279,24 @@ export async function publishVersion(
     .select((eb) => eb.fn.max("version").as("version"))
     .where("clearance_id", "=", clearanceId)
     .executeTakeFirst();
+  // The variables are filled in now, so that what is stored, fingerprinted
+  // and signed is the words, not a template that could read differently later.
+  const { variables } = await getSettings(ctx);
+  const resolved = resolveDocument(parsed.data, variables);
+  if (resolved.missing.length) {
+    throw badRequest(
+      `The text uses variables that are not set: ${resolved.missing.join(", ")}. Set them in Settings.`,
+      { missing: resolved.missing },
+    );
+  }
+  const markerProblems = checkMarkers(
+    resolved.content.body,
+    resolved.content.fields,
+  );
+  if (markerProblems.length)
+    throw badRequest(markerProblems.join(" "), { markers: markerProblems });
   // Stored exactly as fingerprinted: normalised line endings, no stray keys.
-  const content = normalizeDocument(parsed.data);
+  const content = normalizeDocument(resolved.content);
   const row: DocumentVersionsTable = {
     id: newId(),
     clearance_id: clearanceId,
@@ -347,6 +384,7 @@ export type ClearanceState =
 export interface ClearanceStatus {
   clearanceId: string;
   name: string;
+  kind: ClearancesTable["kind"];
   required: boolean;
   state: ClearanceState;
   /** Plain-language reason, for `stale`. */
@@ -363,10 +401,12 @@ export interface ClearanceStatus {
 
 export function requiredCapacities(
   user: Pick<UsersTable, "birthdate">,
-  clearance: Pick<ClearancesTable, "minor_policy">,
+  clearance: Pick<ClearancesTable, "kind" | "minor_policy">,
   settings: Settings,
   now: string,
 ): Capacity[] {
+  // A certification is a mentor's word, whoever the person is.
+  if (clearance.kind === "certification") return ["attester"];
   if (!isWard(user, settings, now)) return ["self"];
   return clearance.minor_policy === "guardian_and_minor"
     ? ["guardian", "minor"]
@@ -487,6 +527,7 @@ export async function statusesFor(
       statuses.push({
         clearanceId: clearance.id,
         name: clearance.name,
+        kind: clearance.kind,
         required: clearance.required_for_all === 1 && participants.has(user.id),
         state: active
           ? "active"

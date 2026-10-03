@@ -194,6 +194,15 @@ for (const engine of ENGINES) {
       expect((await student.get(`/people/${admin.userId}`)).status).toBe(403);
       expect((await mentor.get(`/people/${student.userId}`)).status).toBe(200);
 
+      // Archiving a group, or any other one-field change, leaves the rest alone.
+      await mentor.ok("PATCH", `/groups/${group.id}`, { archived: true });
+      await mentor.ok("PATCH", `/groups/${group.id}`, { archived: false });
+      expect(await mentor.ok("GET", `/groups/${group.id}`)).toMatchObject({
+        name: "Team 100",
+        code: "100",
+        archived: false,
+      });
+
       // A revoked link stops working.
       const links = (await mentor.ok("GET", `/groups/${group.id}`)).invites;
       const memberLink = links.find((l: any) => l.token === group.memberLink);
@@ -856,6 +865,291 @@ for (const engine of ENGINES) {
           fields: DOCUMENT.fields as never,
         }),
       );
+    });
+
+    test("variables are filled in when a version is published, and placed questions are asked in the text", async () => {
+      const clearance = await admin.ok("POST", "/clearances", {
+        name: "General release",
+      });
+      const draft = {
+        title: "{{org}} release",
+        body:
+          "I release {{org}}, of {{address}}, from claims.\n\n{{question:initials}}\n\n" +
+          "## Photos\n\n{{question:photos}}\n",
+        fields: [
+          {
+            key: "initials",
+            label: "I have read the release",
+            type: "initials",
+          },
+          {
+            key: "photos",
+            label: "Photos may be used",
+            type: "multichoice",
+            options: ["On the website", "On social media"],
+          },
+          { key: "date", label: "Date of birth", type: "date" },
+          { key: "typed", label: "Type your name", type: "name" },
+        ],
+      };
+
+      // Nothing is published while a variable has no value...
+      const unset = await admin.request(
+        "POST",
+        `/clearances/${clearance.id}/versions`,
+        draft,
+      );
+      expect(unset.status).toBe(400);
+      expect(unset.body.details.missing).toEqual(["org", "address"]);
+      // ...nor while a marker names a question that does not exist, or is
+      // not on a line of its own.
+      await admin.ok("PATCH", "/admin/settings", {
+        variables: { org: "Example Robotics LLC", address: "1 Shop St" },
+      });
+      expect(
+        (
+          await admin.request("POST", `/clearances/${clearance.id}/versions`, {
+            ...draft,
+            body: "{{question:nope}}",
+          })
+        ).body.error,
+      ).toContain('no question with key "nope"');
+      expect(
+        (
+          await admin.request("POST", `/clearances/${clearance.id}/versions`, {
+            ...draft,
+            body: "Initial here {{question:initials}} please.",
+          })
+        ).body.error,
+      ).toContain("line of its own");
+      // A variable's key has a shape.
+      expect(
+        (
+          await admin.request("PATCH", "/admin/settings", {
+            variables: { "Legal Entity": "x" },
+          })
+        ).status,
+      ).toBe(400);
+
+      // Published: the words, not the template, are what is stored and hashed.
+      const published = await admin.ok(
+        "POST",
+        `/clearances/${clearance.id}/versions`,
+        draft,
+      );
+      expect(published.title).toBe("Example Robotics LLC release");
+      expect(published.body).toContain("Example Robotics LLC, of 1 Shop St");
+      expect(published.body).not.toContain("{{org}}");
+      expect(published.body).toContain("{{question:initials}}");
+      expect(published.bodyHash).toBe(
+        await documentFingerprint({
+          title: published.title,
+          body: published.body,
+          fields: draft.fields as never,
+        }),
+      );
+      // The configuration file carries the variables.
+      const config = await admin.ok("GET", "/admin/config");
+      expect(config.settings.variables).toEqual({
+        org: "Example Robotics LLC",
+        address: "1 Shop St",
+      });
+
+      const group = await makeGroup();
+      const member = await join(group.memberLink, { name: "Renée O'Brien" });
+      const me = member.userId!;
+      // Initials are letters; a name must be the signer's own; a date is a date.
+      const wrong = await member.sign(clearance.id, me, {
+        initials: "12",
+        photos: ["On the moon"],
+        date: "yesterday",
+        typed: "Someone Else",
+      });
+      expect(wrong.status).toBe(400);
+      expect(Object.keys(wrong.body.details).sort()).toEqual([
+        "date",
+        "initials",
+        "photos",
+        "typed",
+      ]);
+      expect(wrong.body.details.typed).toContain("Renée O'Brien");
+      const signed = await member.sign(clearance.id, me, {
+        initials: "ro",
+        photos: ["On the website"],
+        date: "2001-02-03",
+        typed: "renée  o'brien",
+      });
+      expect(signed.status).toBe(200);
+      const record = await member.ok(
+        "GET",
+        `/signatures/${signed.body.signatureId}`,
+      );
+      expect(record.record.answers).toEqual({
+        initials: "RO",
+        photos: ["On the website"],
+        date: "2001-02-03",
+        typed: "renée  o'brien",
+      });
+      const pdf = await member.get(
+        `/signatures/${signed.body.signatureId}/pdf`,
+      );
+      expect(pdf.status).toBe(200);
+    });
+
+    test("certifications: a mentor attests with a passkey; the student and a parent cannot", async () => {
+      await admin.ok("PATCH", "/admin/settings", { minorsEnabled: true });
+      const group = await makeGroup();
+      const certification = await admin.ok("POST", "/clearances", {
+        name: "Bandsaw",
+        kind: "certification",
+        validityDays: 365,
+      });
+      // The kind is fixed once the document exists, and a one-field change
+      // leaves the other rules alone.
+      await admin.ok("PATCH", `/clearances/${certification.id}`, {
+        kind: "release",
+        description: "Still a certification",
+      });
+      expect(
+        (await admin.ok("GET", "/clearances")).find(
+          (c: any) => c.id === certification.id,
+        ),
+      ).toMatchObject({
+        kind: "certification",
+        description: "Still a certification",
+        validityDays: 365,
+      });
+      await admin.ok("POST", `/clearances/${certification.id}/versions`, {
+        title: "Bandsaw certification",
+        body: "The person has shown me they can set up and use the bandsaw safely.",
+        fields: [
+          {
+            key: "date",
+            label: "Date of the check",
+            type: "date",
+            required: true,
+          },
+          { key: "notes", label: "Notes", type: "longtext" },
+        ],
+      });
+
+      const mentor = await join(group.managerLink, {
+        name: "Mo Mentor",
+        adult: true,
+      });
+      const parent = await join(group.memberLink, {
+        name: "Pat Parent",
+        adult: true,
+        as: "guardian",
+      });
+      const child = await parent.ok("POST", "/family/wards", {
+        name: "Kit Kid",
+        birthdate: "2012-05-04",
+        invite: group.memberLink,
+      });
+      const kid = h.client();
+      const claim = await parent.ok(
+        "POST",
+        `/family/wards/${child.id}/claim-invite`,
+      );
+      expect((await kid.register({ invite: claim.token })).status).toBe(200);
+
+      // Waiting on a mentor, whoever the person is.
+      expect(await statusOf(parent, child.id, certification.id)).toMatchObject({
+        kind: "certification",
+        state: "missing",
+        waitingOn: ["attester"],
+      });
+      expect((await kid.sign(certification.id, child.id)).status).toBe(403);
+      expect((await parent.sign(certification.id, child.id)).status).toBe(403);
+      // A manager of another group is not this person's mentor.
+      const otherGroup = await makeGroup("Team 200", "200");
+      const stranger = await join(otherGroup.managerLink, {
+        name: "Other Mentor",
+        adult: true,
+      });
+      expect((await stranger.sign(certification.id, child.id)).status).toBe(
+        403,
+      );
+      // Nobody certifies themself.
+      expect((await mentor.sign(certification.id, mentor.userId!)).status).toBe(
+        403,
+      );
+
+      const page = await mentor.ok(
+        "GET",
+        `/sign/${certification.id}/${child.id}`,
+      );
+      expect(page).toMatchObject({ capacity: "attester" });
+      expect(page.statement).toContain("I certify");
+      const certified = await mentor.sign(certification.id, child.id, {
+        date: "2026-10-02",
+      });
+      expect(certified.status).toBe(200);
+      expect(certified.body.granted).toBe(true);
+      const record = await kid.ok(
+        "GET",
+        `/signatures/${certified.body.signatureId}`,
+      );
+      expect(record.record).toMatchObject({
+        capacity: "attester",
+        signer: { name: "Mo Mentor" },
+        subject: { name: "Kit Kid" },
+      });
+      expect(record.capacityPhrase).toContain("certifying Kit Kid");
+      const status = await statusOf(mentor, child.id, certification.id);
+      expect(status).toMatchObject({ state: "active", signed: ["attester"] });
+      const grant = await h.ctx.db
+        .selectFrom("grants")
+        .selectAll()
+        .where("id", "=", status.grantId)
+        .executeTakeFirstOrThrow();
+      expect(grant).toMatchObject({
+        source: "attestation",
+        granted_by: mentor.userId,
+        signed_as_minor: 0,
+      });
+
+      // Turning 18 does not undo a mentor's word; the validity period does.
+      h.advance(365 * 3);
+      await kid.login();
+      expect((await statusOf(kid, child.id, certification.id)).state).toBe(
+        "expired",
+      );
+      // An administrator can certify too, and the student is a participant
+      // with a required certification outstanding on the roster.
+      await admin.login();
+      await admin.ok("PATCH", `/clearances/${certification.id}`, {
+        requiredForAll: true,
+      });
+      const roster = (await admin.ok("GET", `/groups/${group.id}`)).members;
+      expect(
+        roster
+          .find((m: any) => m.id === child.id)
+          .clearances.find((c: any) => c.clearanceId === certification.id),
+      ).toMatchObject({ required: true, state: "expired" });
+      expect(
+        (await admin.sign(certification.id, child.id, { date: "2029-10-02" }))
+          .body.granted,
+      ).toBe(true);
+      // The configuration file says what kind each document is.
+      const config = await admin.ok("GET", "/admin/config");
+      expect(config.documents).toMatchObject([
+        { name: "Bandsaw", kind: "certification" },
+      ]);
+      // ...and a file that disagrees about a kind reports it, never changes it.
+      const plan = await admin.ok("POST", "/admin/config/plan", {
+        ...config,
+        documents: [{ ...config.documents[0], kind: "release" }],
+      });
+      expect(plan.changes).toEqual([
+        {
+          kind: "document.kind",
+          name: "Bandsaw",
+          have: "certification",
+          wanted: "release",
+        },
+      ]);
     });
 
     test("a backup restores a whole installation, passkeys and signed records included", async () => {

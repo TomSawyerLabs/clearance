@@ -1,4 +1,7 @@
 import {
+  accessSync,
+  chmodSync,
+  constants,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -27,10 +30,12 @@ import {
 } from "../server/services/config.ts";
 import { createInvite } from "../server/services/invites.ts";
 import { getSettings, settingQueries } from "../server/services/settings.ts";
-import { fieldsSchema } from "../shared/document.ts";
+import { configSchema } from "../shared/config.ts";
+import { checkMarkers, fieldsSchema } from "../shared/document.ts";
 import {
   documentFingerprint,
   fromMarkdownFile,
+  resolveDocument,
 } from "../shared/documentFile.ts";
 import {
   DEFAULT_SETTINGS,
@@ -45,6 +50,8 @@ import {
 //   DATABASE_URL  sqlite:<path> (default sqlite:./data/clearance.db) or postgres://...
 //   PORT, HOST    TCP listener (default 127.0.0.1:8080)
 //   SOCKET_PATH   listen on a unix socket instead, for a reverse proxy on the same host
+//   SOCKET_MODE   permissions for that socket, in octal (e.g. 660); unset leaves the
+//                 umask's choice, which lets only this user and root connect
 //   BACKUP_DIR    where automatic backups are written (default: a "backups"
 //                 directory beside the SQLite file, or ./data/backups)
 //   PUBLIC_BASE_URL
@@ -73,9 +80,11 @@ const USAGE = `Usage:
                                  (the first one, or the one named) a new passkey
   clearance backup [FILE]        write a backup now (default: into the backup directory)
   clearance restore FILE         load a backup into an empty installation
-  clearance hash FILE.md [FIELDS.json]
+  clearance hash FILE.md [FIELDS.json] [--config CONFIG.json]
                                  print the fingerprint a document would have if published,
-                                 to match files in version control against a published version
+                                 to match files in version control against a published version.
+                                 A document that uses {{variables}} needs the configuration
+                                 file their values are in
   clearance migrate              apply database migrations and exit
 `;
 
@@ -228,7 +237,7 @@ export async function main(
   };
 
   const socketPath = process.env.SOCKET_PATH;
-  if (socketPath && existsSync(socketPath)) unlinkSync(socketPath);
+  if (socketPath) prepareSocketDir(socketPath);
   const server = socketPath
     ? Bun.serve({ unix: socketPath, fetch })
     : Bun.serve({
@@ -236,6 +245,9 @@ export async function main(
         port: Number(process.env.PORT || 8080),
         fetch,
       });
+  if (socketPath && process.env.SOCKET_MODE) {
+    chmodSync(socketPath, parseInt(process.env.SOCKET_MODE, 8));
+  }
 
   console.log(
     `Clearance is listening on ${socketPath ?? server.url} (${store.engine})`,
@@ -274,6 +286,41 @@ export async function main(
   process.on("SIGTERM", stop);
 }
 
+/**
+ * A socket is created by this process, so its directory has to be writable by
+ * this user. In a container that directory is usually a volume shared with
+ * the proxy, and Docker creates a volume owned by root unless the image
+ * already owns the directory it is mounted on (ours does: /run/clearance).
+ * Say exactly that when it is wrong, instead of letting Bun report EACCES.
+ */
+function prepareSocketDir(socketPath: string) {
+  const dir = dirname(socketPath);
+  if (!existsSync(dir)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      console.error(
+        `SOCKET_PATH: the directory ${dir} does not exist and cannot be created.`,
+      );
+      process.exit(2);
+    }
+  }
+  try {
+    accessSync(dir, constants.W_OK | constants.X_OK);
+  } catch {
+    const stat = statSync(dir);
+    console.error(
+      `SOCKET_PATH: ${dir} is not writable by this process (uid ${process.getuid?.() ?? "?"}; ` +
+        `the directory is owned by uid ${stat.uid}, mode ${(stat.mode & 0o777).toString(8)}). ` +
+        "In Docker, mount an empty volume there so it takes the image's ownership, " +
+        "or chown it to this user.",
+    );
+    process.exit(2);
+  }
+  // Left behind by the previous process: nothing is listening on it.
+  if (existsSync(socketPath)) unlinkSync(socketPath);
+}
+
 const SNAPSHOT = /^clearance-\d{8}T\d{6}Z\.ndjson\.gz$/;
 
 /** The automatic backups on disk, newest first. Other files in the directory are left alone. */
@@ -297,8 +344,18 @@ async function writeBackup(ctx: ReturnType<typeof createCtx>, file: string) {
 }
 
 async function hash(args: string[]) {
-  const [markdown, fieldsFile] = args;
-  if (!markdown || !existsSync(markdown)) {
+  const configIndex = args.indexOf("--config");
+  const configFile = configIndex >= 0 ? args[configIndex + 1] : undefined;
+  const files = args.filter(
+    (arg, index) =>
+      configIndex < 0 || (index !== configIndex && index !== configIndex + 1),
+  );
+  const [markdown, fieldsFile] = files;
+  if (
+    !markdown ||
+    !existsSync(markdown) ||
+    (configIndex >= 0 && (!configFile || !existsSync(configFile)))
+  ) {
     console.error(USAGE);
     process.exit(2);
   }
@@ -318,7 +375,38 @@ async function hash(args: string[]) {
     );
     process.exit(2);
   }
-  console.log(await documentFingerprint({ title, body, fields: fields.data }));
+  let variables = {};
+  if (configFile) {
+    const config = configSchema.safeParse(
+      JSON.parse(readFileSync(configFile, "utf8")),
+    );
+    if (!config.success) {
+      console.error(`${configFile} is not a configuration file.`);
+      process.exit(2);
+    }
+    variables = config.data.settings.variables ?? {};
+  }
+  // The same checks publishing makes, so that a fingerprint printed here is
+  // one the server could have recorded.
+  const resolved = resolveDocument(
+    { title, body, fields: fields.data },
+    variables,
+  );
+  if (resolved.missing.length) {
+    console.error(
+      `The document uses variables with no value: ${resolved.missing.join(", ")}. ` +
+        (configFile
+          ? `Add them under settings.variables in ${configFile}.`
+          : "Pass the configuration file they are set in with --config."),
+    );
+    process.exit(2);
+  }
+  const problems = checkMarkers(resolved.content.body, resolved.content.fields);
+  if (problems.length) {
+    console.error(problems.join("\n"));
+    process.exit(2);
+  }
+  console.log(await documentFingerprint(resolved.content));
 }
 
 /**

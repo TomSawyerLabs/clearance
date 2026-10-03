@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { variablesSchema } from "./document.ts";
 
 // Every setting here is stored in the database and editable at runtime by an
 // administrator. What describes the deployment instead of the site (the
@@ -39,6 +40,13 @@ export const settingsSchema = z.object({
   backupEveryHours: z.number().int().min(0).max(720),
   /** How many automatic backups to keep before the oldest is deleted. */
   backupKeep: z.number().int().min(1).max(365),
+  /**
+   * Facts about the organization that documents refer to as `{{name}}`: the
+   * legal entity, its address, the landlord. They are filled in when a
+   * version is published, so a document's wording can stay generic while
+   * the facts live here, in the configuration.
+   */
+  variables: variablesSchema,
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -53,6 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sessionDays: 30,
   backupEveryHours: 24,
   backupKeep: 30,
+  variables: {},
 };
 
 /** Whether guardians are in play: the site takes minors, and requires a guardian for them. */

@@ -1,4 +1,9 @@
-import { type Field, fieldsSchema } from "./document.ts";
+import {
+  type Field,
+  fieldsSchema,
+  resolveVariables,
+  type Variables,
+} from "./document.ts";
 
 // A document as files, so that its wording can be written, reviewed and kept
 // in version control, and a published version matched back to a commit.
@@ -44,6 +49,36 @@ export function normalizeDocument(content: DocumentContent): DocumentContent {
     body: normalizeText(content.body),
     // Parsing drops unknown keys, so stray properties cannot change the fingerprint.
     fields: fieldsSchema.parse(content.fields),
+  };
+}
+
+/**
+ * The document with every `{{variable}}` replaced, in the title, the text and
+ * the questions' wording. This is what gets published and fingerprinted: the
+ * words people sign, not a template. Names with no value are reported.
+ */
+export function resolveDocument(
+  content: DocumentContent,
+  variables: Variables,
+): { content: DocumentContent; missing: string[] } {
+  const missing = new Set<string>();
+  const resolve = (text: string) => {
+    const result = resolveVariables(text, variables);
+    result.missing.forEach((name) => missing.add(name));
+    return result.text;
+  };
+  return {
+    content: {
+      title: resolve(content.title),
+      body: resolve(content.body),
+      fields: content.fields.map((field) => ({
+        ...field,
+        label: resolve(field.label),
+        ...(field.help !== undefined && { help: resolve(field.help) }),
+        ...(field.options && { options: field.options.map(resolve) }),
+      })),
+    },
+    missing: [...missing],
   };
 }
 

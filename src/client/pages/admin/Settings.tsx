@@ -1,15 +1,18 @@
 import {
   Button,
+  Code,
   Group,
   Select,
   NumberInput,
   Stack,
   Switch,
   Text,
+  Textarea,
   TextInput,
   Title,
 } from "@mantine/core";
 import { useState } from "react";
+import type { Variables } from "../../../shared/document.ts";
 import { api, type Settings } from "../../api.ts";
 import { Loaded, Problem, useAction } from "../../components/common.tsx";
 import { ConfigFile } from "./ConfigFile.tsx";
@@ -24,6 +27,101 @@ function timeZones(current: string): string[] {
       ? Intl.supportedValuesOf("timeZone")
       : [];
   return [...new Set(["UTC", current, ...known])].sort();
+}
+
+/**
+ * Facts documents refer to as `{{name}}`. Kept as a list of rows while
+ * editing, so that a key can be typed letter by letter without the entry
+ * jumping around; turned back into an object on every change.
+ */
+function VariablesEditor({
+  variables,
+  onChange,
+}: {
+  variables: Variables;
+  onChange(variables: Variables): void;
+}) {
+  const [rows, setRows] = useState<{ key: string; value: string }[]>(() =>
+    Object.entries(variables).map(([key, value]) => ({ key, value })),
+  );
+  const update = (next: { key: string; value: string }[]) => {
+    setRows(next);
+    onChange(
+      Object.fromEntries(
+        next
+          .filter((row) => row.key.trim())
+          .map((row) => [row.key.trim(), row.value]),
+      ),
+    );
+  };
+  return (
+    <Stack gap="sm">
+      <Stack gap={2}>
+        <Title order={4}>Variables</Title>
+        <Text size="sm" c="dimmed">
+          Facts about the organization that documents refer to, so the wording
+          can say <Code>{"{{legal_entity}}"}</Code> and stay the same when a
+          fact changes. Filled in when a version is published. Keys are
+          lowercase letters, digits and underscores.
+        </Text>
+      </Stack>
+      {rows.map((row, index) => (
+        <Group key={index} align="flex-start" wrap="nowrap">
+          <TextInput
+            aria-label="Variable name"
+            placeholder="legal_entity"
+            value={row.key}
+            onChange={(event) =>
+              update(
+                rows.map((r, i) =>
+                  i === index
+                    ? { ...r, key: event.currentTarget.value.toLowerCase() }
+                    : r,
+                ),
+              )
+            }
+            styles={{
+              input: { fontFamily: "var(--mantine-font-family-monospace)" },
+            }}
+            w={220}
+          />
+          <Textarea
+            aria-label="Variable value"
+            placeholder="Example Robotics LLC"
+            value={row.value}
+            onChange={(event) =>
+              update(
+                rows.map((r, i) =>
+                  i === index ? { ...r, value: event.currentTarget.value } : r,
+                ),
+              )
+            }
+            autosize
+            minRows={1}
+            style={{ flex: 1 }}
+          />
+          <Button
+            variant="subtle"
+            color="red"
+            size="compact-sm"
+            mt={6}
+            onClick={() => update(rows.filter((_, i) => i !== index))}
+          >
+            Remove
+          </Button>
+        </Group>
+      ))}
+      <Group>
+        <Button
+          variant="light"
+          size="xs"
+          onClick={() => update([...rows, { key: "", value: "" }])}
+        >
+          Add a variable
+        </Button>
+      </Group>
+    </Stack>
+  );
 }
 
 function Form({ initial }: { initial: AdminSettings }) {
@@ -116,6 +214,11 @@ function Form({ initial }: { initial: AdminSettings }) {
             </>
           )}
         </Stack>
+
+        <VariablesEditor
+          variables={values.variables}
+          onChange={(variables) => set("variables", variables)}
+        />
 
         <Stack gap="sm">
           <Title order={4}>Sign-in and site address</Title>

@@ -127,9 +127,20 @@ export async function updateGroup(
   raw: unknown,
 ) {
   await requireGroupManager(ctx, caller, groupId);
-  const parsed = groupInput
-    .partial()
-    .extend({ archived: z.boolean().optional() })
+  // Not `groupInput.partial()`: that fills `code` in as null whenever a patch
+  // leaves it out, so archiving a group would erase its number.
+  const parsed = z
+    .object({
+      name: groupInput.shape.name.optional(),
+      code: z
+        .string()
+        .trim()
+        .max(40)
+        .nullable()
+        .optional()
+        .transform((code) => (code === undefined ? undefined : code || null)),
+      archived: z.boolean().optional(),
+    })
     .safeParse(raw);
   if (!parsed.success)
     throw badRequest("Check the details and try again.", parsed.error.issues);

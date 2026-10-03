@@ -6,8 +6,8 @@ with a passkey, and the people who run a group can see at a glance who has signe
 It was built for a robotics maker space whose students need a release signed by a parent, but
 nothing in it is specific to that.
 
-**Status: early.** Signed releases work end to end. Training certifications are designed for but
-not built. Read [What is not done](#what-is-not-done) before relying on it.
+**Status: early.** Signed releases and mentor-signed certifications work end to end. Read
+[What is not done](#what-is-not-done) before relying on it.
 
 ## What it does
 
@@ -22,12 +22,23 @@ not built. Read [What is not done](#what-is-not-done) before relying on it.
 - **Parents and guardians, if you turn it on.** A guardian has their own account and is linked to a
   child's. A parent can enrol a child and sign for them, or a student can sign up first and send a
   parent a link. When the child comes of age, the guardian's signature stops counting.
+- **Certifications.** A document can instead be one a mentor signs about someone else: a manager
+  of one of the person's groups, or an administrator, attests with their passkey that the person
+  is trained, and that grants the clearance. Same records, same PDFs, same statuses.
 - **Versioned documents.** Documents are written in Markdown with optional questions. Publishing a
   change makes a new version; you choose whether everyone has to sign again. A document can be
   loaded from and downloaded as files, and its fingerprint checked with `clearance hash`, so the
   wording can live in version control.
-- **Configuration as a file.** The settings, each document's rules and the list of groups download
-  as one JSON file to keep in version control, and apply back with a preview of what would change.
+- **Questions where they belong.** A question is asked after the text, or exactly where the text
+  places it with `{{question:key}}` on a line of its own: initials beside a clause, a choice under
+  the paragraph it concerns. Kinds: short and long text, one choice, several choices, tick boxes,
+  initials, a date, and the signer typing their own name.
+- **Variables.** Facts about the organization (the legal entity, its address, the landlord) are
+  settings, and a document says `{{legal_entity}}`. They are filled in when a version is
+  published, so what is stored, fingerprinted and signed is the words.
+- **Configuration as a file.** The settings (variables included), each document's rules and the
+  list of groups download as one JSON file to keep in version control, and apply back with a
+  preview of what would change.
 - **Backups that move between databases.** One file holds everything, is written automatically on
   a schedule, and restores onto any supported database.
 - **One organization per installation.** The first person to register becomes the administrator.
@@ -54,6 +65,7 @@ Only the database and the listener are configured from the environment:
 | `DATABASE_URL`     | `sqlite:./data/clearance.db` | `sqlite:<path>` for the embedded database, or `postgres://...`                |
 | `HOST`, `PORT`     | `127.0.0.1`, `8080`          | Where to listen                                                               |
 | `SOCKET_PATH`      | unset                        | Listen on a unix socket instead, for a reverse proxy on the same host         |
+| `SOCKET_MODE`      | unset                        | Permissions for that socket, in octal, e.g. `660`                             |
 | `PUBLIC_BASE_URL`  | recorded at setup            | The address people reach the site at, e.g. `https://release.example.org`      |
 | `CLIENT_IP_HEADER` | unset                        | The header your reverse proxy puts the visitor's address in, e.g. `X-Real-IP` |
 | `BACKUP_DIR`       | beside the database          | Where automatic backups are written                                           |
@@ -100,8 +112,8 @@ engine:
 
 ## What is not done
 
-- **Certifications.** A clearance granted by a mentor's attestation instead of a signature. The
-  data model has a place for it; nothing else does.
+- **Nothing for machines yet.** A certification is visible to people; there is no API token for a
+  tool interlock to ask "is this person cleared".
 - **Per-group requirements.** A document is either required of everyone in any group, or optional.
 - **Names outside Western European alphabets print as `?` in the PDF.** The PDF uses the built-in
   PDF fonts. The stored record and the web pages are correct; only the PDF rendering is affected.

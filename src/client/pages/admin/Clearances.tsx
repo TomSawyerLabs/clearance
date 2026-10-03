@@ -4,6 +4,7 @@ import {
   Button,
   Group,
   Paper,
+  Radio,
   Stack,
   Text,
   Textarea,
@@ -20,6 +21,7 @@ function NewClearance() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<ClearanceDto["kind"]>("release");
   const action = useAction();
   return (
     <Paper withBorder p="md">
@@ -30,6 +32,7 @@ function NewClearance() {
             const created = await post<ClearanceDto>("/clearances", {
               name,
               description,
+              kind,
             });
             navigate(`/admin/clearances/${created.id}`);
           });
@@ -44,6 +47,23 @@ function NewClearance() {
             onChange={(event) => setName(event.currentTarget.value)}
             required
           />
+          <Radio.Group
+            label="Who signs it"
+            description="Fixed once the document exists."
+            value={kind}
+            onChange={(value) => setKind(value as ClearanceDto["kind"])}
+          >
+            <Stack gap="xs" mt="xs">
+              <Radio
+                value="release"
+                label="The person, or a parent or guardian for a minor: a release"
+              />
+              <Radio
+                value="certification"
+                label="A mentor, attesting that the person is trained: a certification"
+              />
+            </Stack>
+          </Radio.Group>
           <Textarea
             label="Description"
             description="Optional. A note for administrators."
@@ -70,8 +90,8 @@ export function ClearancesPage() {
       <Stack gap={4}>
         <Title order={2}>Documents</Title>
         <Text c="dimmed" size="sm">
-          Each document is something a person signs to hold a clearance, such as
-          a liability release.
+          Each document is something signed to hold a clearance: a liability
+          release the person signs, or a certification a mentor signs for them.
         </Text>
       </Stack>
       <Loaded data={clearances.data} error={clearances.error}>
@@ -89,6 +109,9 @@ export function ClearancesPage() {
                     >
                       {clearance.name}
                     </Anchor>
+                    {clearance.kind === "certification" && (
+                      <Badge color="grape">Certification</Badge>
+                    )}
                     {clearance.requiredForAll && (
                       <Badge color="blue">Required</Badge>
                     )}

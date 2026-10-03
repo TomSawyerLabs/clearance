@@ -2,11 +2,11 @@ import { z } from "zod";
 import { settingsSchema } from "./settings.ts";
 
 // The configuration file: how a site is set up, in a form that can be kept in
-// version control beside the documents' wording. It holds the site's settings,
-// each document's rules, and the list of groups. It does not hold the wording
-// itself (that is the `.md` and `.fields.json` files) or anything about
-// people: who is in a group, its links, and what anyone signed are data, and
-// belong in backups.
+// version control beside the documents' wording. It holds the site's settings
+// (the variables documents refer to among them), each document's rules, and
+// the list of groups. It does not hold the wording itself (that is the `.md`
+// and `.fields.json` files) or anything about people: who is in a group, its
+// links, and what anyone signed are data, and belong in backups.
 //
 // The site address is left out on purpose: it belongs to the deployment
 // (PUBLIC_BASE_URL), and the same configuration should apply to a test copy.
@@ -17,6 +17,12 @@ export const configDocumentSchema = z.object({
   /** Documents are matched by name when a configuration is applied. */
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(1000).default(""),
+  /**
+   * A release is signed by the person (or their guardian); a certification is
+   * signed by a mentor attesting that the person is trained. Fixed once the
+   * document exists.
+   */
+  kind: z.enum(["release", "certification"]).default("release"),
   requiredForAll: z.boolean().default(false),
   validityDays: z.number().int().min(1).max(3650).nullable().default(null),
   minorPolicy: z.enum(["guardian", "guardian_and_minor"]).default("guardian"),
@@ -69,6 +75,8 @@ export type ConfigChange =
       published: string | null;
       expected: string;
     }
+  /** The file says a document is of the other kind. A kind is fixed; reported, never changed. */
+  | { kind: "document.kind"; name: string; have: string; wanted: string }
   /** A document that exists on the site and is not in the file. Left alone. */
   | { kind: "document.unlisted"; name: string }
   | { kind: "group.create"; name: string }
@@ -84,7 +92,10 @@ export type ConfigChange =
 
 /** Whether applying would actually write something for this change. */
 export function isApplied(change: ConfigChange): boolean {
-  return !["document.text", "document.unlisted", "group.unlisted"].includes(
-    change.kind,
-  );
+  return ![
+    "document.text",
+    "document.kind",
+    "document.unlisted",
+    "group.unlisted",
+  ].includes(change.kind);
 }

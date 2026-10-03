@@ -40,13 +40,29 @@ import {
   statusesFor,
 } from "./clearances.ts";
 import { capacityPhrase, renderRecordPdf } from "./pdf.ts";
-import { getUser, isGuardianOf, isWard, relationTo } from "./people.ts";
+import {
+  getUser,
+  isGuardianOf,
+  isWard,
+  managesPerson,
+  relationTo,
+} from "./people.ts";
 import { getSettings, rpIdOf } from "./settings.ts";
 
 /** The words the signer agrees to. Part of the signed record. */
 export const SIGNING_STATEMENT =
   "I have read this document in full. I agree to sign it electronically, and I understand that " +
   "approving it with my passkey is my signature and has the same effect as signing on paper.";
+
+/** What a mentor agrees to when certifying someone. Part of the signed record. */
+export const ATTESTATION_STATEMENT =
+  "I certify that I have personally seen the person named in this record meet what this " +
+  "document describes. I understand that approving it with my passkey is my signature and has " +
+  "the same effect as signing on paper.";
+
+export function statementFor(kind: "release" | "certification"): string {
+  return kind === "certification" ? ATTESTATION_STATEMENT : SIGNING_STATEMENT;
+}
 
 /**
  * Exactly what a passkey signs. The WebAuthn challenge is the SHA-256 of this
@@ -107,7 +123,21 @@ export async function signingContext(
   const subjectIsMinor = isWard(subject, settings, now);
   let capacity: Capacity | null = null;
   let blocked: string | null = null;
-  if (signer.id === subject.id) {
+  if (clearance.kind === "certification") {
+    // A certification is a mentor's word about someone else: a manager of
+    // one of the person's groups, or an administrator. Never the person, and
+    // never a parent.
+    if (signer.id === subject.id) {
+      blocked = "You cannot certify yourself. A mentor does that.";
+    } else if (
+      signer.is_admin ||
+      (await managesPerson(ctx, signer.id, subject.id))
+    ) {
+      capacity = "attester";
+    } else {
+      blocked = `Only a manager of one of ${subject.name}'s groups, or an administrator, can certify this.`;
+    }
+  } else if (signer.id === subject.id) {
     capacity = subjectIsMinor ? "minor" : "self";
   } else if (await isGuardianOf(ctx, signer.id, subject.id)) {
     if (subjectIsMinor) capacity = "guardian";
@@ -141,6 +171,7 @@ export async function signingContext(
     capacity: blocked ? null : capacity,
     blocked,
     status: status ?? null,
+    statement: statementFor(clearance.kind),
   };
 }
 
@@ -158,7 +189,12 @@ export async function signOptions(ctx: Ctx, caller: Caller, raw: unknown) {
   const { settings, signer, subject, clearance, version, capacity } = context;
   if (!settings.origin) throw badRequest("The site has not been set up yet.");
 
-  const checked = checkAnswers(version.fields, capacity, parsed.data.answers);
+  const checked = checkAnswers(
+    version.fields,
+    capacity,
+    parsed.data.answers,
+    signer,
+  );
   if (!checked.ok)
     throw badRequest("Some answers need attention.", checked.problems);
 
@@ -182,7 +218,7 @@ export async function signOptions(ctx: Ctx, caller: Caller, raw: unknown) {
     signer: { id: signer.id, name: signer.name },
     capacity,
     answers: checked.answers,
-    statement: SIGNING_STATEMENT,
+    statement: context.statement,
     signedAt: ctx.now(),
   };
   const canonical = canonicalJson(record);
@@ -328,18 +364,20 @@ export async function signVerify(ctx: Ctx, caller: Caller, raw: unknown) {
   ]);
   let grant: GrantsTable | null = null;
   if (required.every((capacity) => have.has(capacity))) {
+    const attested = record.capacity === "attester";
     grant = {
       id: newId(),
       clearance_id: clearance.id,
       user_id: subject.id,
       document_version_id: version.id,
-      source: "signature",
-      granted_by: null,
+      source: attested ? "attestation" : "signature",
+      granted_by: attested ? signer.id : null,
       granted_at: now,
       expires_at: clearance.validity_days
         ? addDays(now, clearance.validity_days)
         : null,
-      signed_as_minor: subjectIsMinor ? 1 : 0,
+      // A mentor's word does not lapse when the student turns 18.
+      signed_as_minor: subjectIsMinor && !attested ? 1 : 0,
       revoked_at: null,
       revoked_by: null,
       revoke_reason: null,

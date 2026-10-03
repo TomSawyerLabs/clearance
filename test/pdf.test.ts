@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
-import { parseDocument } from "../src/shared/document.ts";
+import {
+  checkMarkers,
+  parseDocument,
+  placedQuestions,
+} from "../src/shared/document.ts";
 import { renderRecordPdf } from "../src/server/services/pdf.ts";
 
 const base = {
@@ -73,6 +77,64 @@ test("the same record always renders to the same bytes", async () => {
   const first = await renderRecordPdf({ ...base, body });
   const second = await renderRecordPdf({ ...base, body });
   expect(Buffer.from(first).equals(Buffer.from(second))).toBe(true);
+});
+
+test("questions placed in the text are printed there, the rest at the end", async () => {
+  const fields = [
+    { key: "initials", label: "Initial here", type: "initials" as const },
+    {
+      key: "agree",
+      label: "I agree to the rules",
+      type: "acknowledge" as const,
+    },
+    {
+      key: "photos",
+      label: "Photos may be used",
+      type: "multichoice" as const,
+      options: ["Website", "Social media"],
+    },
+    { key: "contact", label: "Emergency contact", type: "text" as const },
+  ];
+  const body =
+    "# Rules\n\nFollow them.\n\n{{question:initials}}\n\n{{question:agree}}\n\n- A list item\n- {{question:photos}}\n";
+  const blocks = parseDocument(body);
+  expect(placedQuestions(blocks)).toEqual(["initials", "agree", "photos"]);
+  // The marker has to be a whole paragraph; one inside a sentence is text.
+  expect(
+    placedQuestions(parseDocument("Initial {{question:initials}} here")),
+  ).toEqual([]);
+  expect(checkMarkers(body, fields)).toEqual([]);
+  expect(checkMarkers("{{question:nope}}", fields)[0]).toContain("nope");
+
+  const bytes = await renderRecordPdf({
+    ...base,
+    body,
+    fields,
+    answers: {
+      initials: "KK",
+      agree: true,
+      photos: ["Website", "Social media"],
+      contact: "Pat 555-0100",
+    },
+  });
+  const pdf = await PDFDocument.load(bytes);
+  expect(pdf.getPageCount()).toBe(1);
+  // The streams are compressed, so the words cannot be grepped; what can be
+  // checked is that each answer, placed or trailing, changes the output.
+  const withoutContact = await renderRecordPdf({
+    ...base,
+    body,
+    fields,
+    answers: { initials: "KK", agree: true, photos: ["Website"] },
+  });
+  expect(Buffer.from(withoutContact).equals(Buffer.from(bytes))).toBe(false);
+  const unticked = await renderRecordPdf({
+    ...base,
+    body,
+    fields,
+    answers: { initials: "KK", agree: false, photos: ["Website"] },
+  });
+  expect(Buffer.from(unticked).equals(Buffer.from(withoutContact))).toBe(false);
 });
 
 test("characters the built-in fonts lack do not break rendering", async () => {

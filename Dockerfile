@@ -12,8 +12,16 @@ RUN bun run compile
 FROM debian:bookworm-slim
 # A fixed, unprivileged uid, so a host directory mounted at /data can be
 # chowned to it ahead of time.
+#
+# /run/clearance is where SOCKET_PATH=/run/clearance/clearance.sock puts the
+# unix socket for a reverse proxy on the same host. It is owned by the app's
+# user here on purpose: when an EMPTY volume is mounted over it, Docker copies
+# this directory's ownership onto the volume (the same copy-up that seeds a
+# volume with an image's files), so the unprivileged app can create its
+# socket in a volume it shares with the proxy without anyone chowning it.
 RUN useradd --uid 10001 --user-group --no-create-home clearance \
-  && mkdir /data && chown clearance:clearance /data
+  && mkdir /data /run/clearance \
+  && chown clearance:clearance /data /run/clearance
 COPY --from=build /app/dist/clearance /usr/local/bin/clearance
 
 # The embedded database lives on the volume. Point DATABASE_URL at

@@ -87,6 +87,11 @@ function MemberRow({
           )}
           {member.clearances.map((status) => {
             const { color, label, detail } = describeStatus(status);
+            // A manager certifies from here; releases are the family's to sign.
+            const canCertify =
+              status.kind === "certification" &&
+              status.waitingOn.includes("attester") &&
+              member.id !== state.me?.id;
             return (
               <div key={status.clearanceId}>
                 <Row gap={6}>
@@ -94,6 +99,16 @@ function MemberRow({
                     {label}
                   </Badge>
                   <Text size="sm">{status.name}</Text>
+                  {canCertify && (
+                    <Button
+                      component={Link}
+                      to={`/sign/${status.clearanceId}/${member.id}`}
+                      size="compact-xs"
+                      variant="light"
+                    >
+                      Certify
+                    </Button>
+                  )}
                 </Row>
                 {detail && (
                   <Text size="xs" c="dimmed">

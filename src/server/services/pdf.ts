@@ -6,10 +6,14 @@ import {
   StandardFonts,
 } from "pdf-lib";
 import {
+  type Answers,
+  answerText,
   type Block,
+  type Capacity,
   type Field,
   type Inline,
   parseDocument,
+  placedQuestions,
 } from "../../shared/document.ts";
 
 // Lays a signed record out as a PDF with pdf-lib, which is plain JavaScript
@@ -49,6 +53,8 @@ class Writer {
   constructor(
     readonly doc: PDFDocument,
     readonly fonts: Fonts,
+    /** The questions and answers, for those placed in the text. */
+    readonly questions: { fields: Field[]; answers: Answers },
   ) {
     this.page = doc.addPage([PAGE.width, PAGE.height]);
     this.y = PAGE.height - PAGE.margin;
@@ -246,8 +252,75 @@ class Writer {
         case "rule":
           this.rule();
           break;
+        case "question": {
+          const field = this.questions.fields.find(
+            (candidate) => candidate.key === block.key,
+          );
+          if (field) this.question(field, indent);
+          break;
+        }
       }
     }
+  }
+
+  /** A question where the text placed it, with its answer beside it. */
+  question(field: Field, indent = 0) {
+    const value = this.questions.answers[field.key];
+    const left = PAGE.margin + indent;
+    this.space(3);
+    if (field.type === "acknowledge" || field.type === "checkbox") {
+      // A box, ticked or not, with the statement beside it.
+      this.text([{ text: field.label }], { indent: indent + 16 });
+      const top = this.y + BODY * LEADING - 1;
+      this.page.drawRectangle({
+        x: left + 1,
+        y: top - 9,
+        width: 9,
+        height: 9,
+        borderColor: INK,
+        borderWidth: 0.75,
+      });
+      if (value === true) {
+        this.page.drawText("X", {
+          x: left + 2.5,
+          y: top - 8,
+          size: 8,
+          font: this.fonts.bold,
+          color: INK,
+        });
+      }
+    } else if (field.type === "initials") {
+      // A boxed set of initials, as on a paper form.
+      const initials = printable(answerText(value), this.fonts.bold);
+      this.need(22);
+      this.y -= 18;
+      this.page.drawRectangle({
+        x: left,
+        y: this.y - 4,
+        width: 46,
+        height: 18,
+        borderColor: INK,
+        borderWidth: 0.75,
+      });
+      this.page.drawText(initials, {
+        x: left + 23 - this.fonts.bold.widthOfTextAtSize(initials, 10) / 2,
+        y: this.y + 1,
+        size: 10,
+        font: this.fonts.bold,
+        color: INK,
+      });
+      this.page.drawText(printable(field.label, this.fonts.regular), {
+        x: left + 54,
+        y: this.y + 1,
+        size: 9,
+        font: this.fonts.regular,
+        color: MUTED,
+      });
+    } else {
+      this.text([{ text: field.label }], { base: "bold", indent });
+      this.plain(answerText(value), { indent: indent + 12 });
+    }
+    this.space(BODY * 0.5);
   }
 }
 
@@ -279,12 +352,12 @@ export interface RecordPdfInput {
   body: string;
   bodyHash: string;
   fields: Field[];
-  answers: Record<string, string | boolean>;
+  answers: Answers;
   signatureId: string;
   subjectName: string;
   subjectBirthdate: string | null;
   signerName: string;
-  capacity: "self" | "guardian" | "minor";
+  capacity: Capacity;
   statement: string;
   signedAt: string;
   ip: string;
@@ -309,6 +382,8 @@ export function capacityPhrase(
       return `as parent or legal guardian of ${input.subjectName}`;
     case "minor":
       return "as the participant (a minor), alongside a parent or guardian";
+    case "attester":
+      return `as a mentor, certifying ${input.subjectName}`;
     default:
       return "on their own behalf";
   }
@@ -333,7 +408,10 @@ export async function renderRecordPdf(
     boldItalic: await doc.embedFont(StandardFonts.HelveticaBoldOblique),
     mono: await doc.embedFont(StandardFonts.Courier),
   };
-  const w = new Writer(doc, fonts);
+  const w = new Writer(doc, fonts, {
+    fields: input.fields,
+    answers: input.answers,
+  });
 
   w.plain(input.siteName, { size: 9, color: MUTED });
   w.plain(input.title, { size: 17, base: "bold" });
@@ -344,25 +422,23 @@ export async function renderRecordPdf(
   w.rule();
   w.space(4);
 
-  w.blocks(parseDocument(input.body));
+  const blocks = parseDocument(input.body);
+  w.blocks(blocks);
 
-  const answered = input.fields.filter((field) => field.key in input.answers);
+  // Questions placed in the text were printed there; the rest go here.
+  const placed = new Set(placedQuestions(blocks));
+  const answered = input.fields.filter(
+    (field) => field.key in input.answers && !placed.has(field.key),
+  );
   if (answered.length) {
     w.rule();
     w.need(60);
     w.plain("Answers", { size: 12.5, base: "bold" });
     w.space(3);
     for (const field of answered) {
-      const value = input.answers[field.key];
-      const shown =
-        typeof value === "boolean"
-          ? value
-            ? "Yes"
-            : "No"
-          : value || "(left blank)";
       w.need(BODY * LEADING * 2);
       w.plain(field.label, { base: "bold" });
-      w.plain(shown, { indent: 12 });
+      w.plain(answerText(input.answers[field.key]), { indent: 12 });
       w.space(BODY * 0.4);
     }
   }
@@ -381,7 +457,9 @@ export async function renderRecordPdf(
   const about = input.subjectBirthdate
     ? `${input.subjectName} (born ${input.subjectBirthdate})`
     : input.subjectName;
-  w.plain(`Participant: ${about}`);
+  w.plain(
+    `${input.capacity === "attester" ? "Certified" : "Participant"}: ${about}`,
+  );
   w.plain(`Signed: ${formatInstant(input.signedAt, input.timezone)}`);
   w.space(6);
   w.plain(

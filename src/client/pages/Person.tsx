@@ -18,6 +18,7 @@ const CAPACITY = {
   self: "For themself",
   guardian: "As guardian",
   minor: "As the student",
+  attester: "As mentor, certifying",
 } as const;
 
 /** One person's standing and signed records, for a manager, guardian or admin. */
@@ -45,11 +46,16 @@ export function PersonPage() {
 
             <Stack gap="sm">
               <Title order={3}>Clearances</Title>
+              {/* A guardian signs releases for a minor; a manager or admin certifies. */}
               <ClearanceList
                 subjectId={data.id}
                 clearances={data.clearances}
                 signAs={
-                  data.relation === "guardian" && data.minor ? "guardian" : null
+                  data.relation === "guardian" && data.minor
+                    ? "guardian"
+                    : oversees
+                      ? "attester"
+                      : null
                 }
               />
               <Problem message={action.error} />

@@ -123,14 +123,21 @@ A document's wording can be kept in version control and matched to what was publ
 - `clearance hash release.md release.fields.json` prints the fingerprint those files would have.
   If it equals a published version's, the files are exactly what people signed. It needs no
   database, so it can run in a checkout of the documents, or in that repository's CI.
+- A document may say `{{legal_entity}}` where the site's settings hold the value. Publishing
+  fills every variable in and stores the result, so the published text and its fingerprint are the
+  words people see. Pass the configuration file the values are in to check such files:
+  `clearance hash release.md release.fields.json --config clearance.config.json`. A variable with
+  no value stops publishing, and stops `hash`, with the same message.
+- `{{question:key}}` on a line of its own places that question in the text. Every marker must
+  name a question and stand alone with blank lines around it, or publishing refuses.
 
 ## The configuration file
 
 How a site is set up can be kept in version control next to its documents.
 
-**Settings → Download configuration** gives `clearance.config.json`: the site's settings, each
-document's rules (required, validity, who signs for a minor, archived), and the list of groups
-with their codes. For each document it also records the version and fingerprint of the published
+**Settings → Download configuration** gives `clearance.config.json`: the site's settings (the
+variables among them), each document's kind and rules (required, validity, who signs for a minor,
+archived), and the list of groups with their codes. For each document it also records the version and fingerprint of the published
 text, so the file says which wording is live.
 
 It deliberately leaves out:
@@ -174,6 +181,18 @@ release.example.org {
 	reverse_proxy unix//run/clearance/clearance.sock
 }
 ```
+
+The socket is created by Clearance, so its directory must be writable by the user Clearance runs
+as, and the proxy must be allowed to connect: by default only that user and root can, and
+`SOCKET_MODE=660` (with the proxy in Clearance's group) or `SOCKET_MODE=666` opens it up.
+
+**In Docker**, share a named volume between the two containers and mount it at `/run/clearance`
+in Clearance's. The image owns that directory, and Docker gives an **empty** volume the ownership
+of the directory it is first mounted over, so the unprivileged app can create its socket there and
+nobody has to `chown` anything: `docker volume create clearance_sock` ahead of time is fine, as
+long as nothing writes into it before Clearance starts. A proxy that runs as root in its container
+(Caddy's official image does) connects without further settings. If the volume was populated by
+something else first, Clearance refuses to start and says which uid owns the directory.
 
 Then tell Clearance which header carries the visitor's address, with the `CLIENT_IP_HEADER`
 environment variable:
