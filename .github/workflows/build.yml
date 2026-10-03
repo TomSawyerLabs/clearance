@@ -106,8 +106,10 @@ jobs:
       # named volume shared with the proxy's container. The volume is created
       # EMPTY and root-owned beforehand, as a deploy script would, and the app
       # runs as uid 10001; this passes only because Docker gives an empty volume
-      # the ownership of the image directory it is mounted over. A root
-      # container stands in for the proxy and connects through the socket.
+      # the ownership of the image directory it is mounted over. A container
+      # running as root stands in for the proxy (Caddy's image runs as root)
+      # and connects through the socket; the default socket mode admits only
+      # the app's user and root, so the client has to be root here.
       - name: The published image serves on a unix socket in a shared volume
         run: |
           docker volume create smoke_sock
@@ -116,10 +118,11 @@ jobs:
             -e SOCKET_PATH=/run/clearance/clearance.sock \
             "${{ steps.img.outputs.name }}@${{ steps.push.outputs.digest }}"
           for attempt in $(seq 1 30); do
-            if docker run --rm -v smoke_sock:/s curlimages/curl:8.10.1 \
+            if docker run --rm --user 0:0 -v smoke_sock:/s curlimages/curl:8.10.1 \
                  -fsS --unix-socket /s/clearance.sock http://clearance/api/state \
                  | grep -q '"setupNeeded":true'; then
               docker logs smoke-sock
+              docker run --rm -v smoke_sock:/s alpine:3 ls -ln /s
               exit 0
             fi
             sleep 1
